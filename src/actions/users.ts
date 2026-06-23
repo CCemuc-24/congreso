@@ -6,7 +6,9 @@ import { ok, fail, type ActionResult } from '@/domain/result';
 import { isRut } from '@/domain/rut';
 import {
   userCreateSchema,
+  userUpdateSchema,
   type UserCreateInput,
+  type UserUpdateInput,
 } from '@/schemas/user';
 
 export type { User };
@@ -78,4 +80,41 @@ export async function getUserByRut(rut: string): Promise<ActionResult<User>> {
   const user = await prisma.user.findUnique({ where: { rut } });
   if (!user) return fail('User not found', 404);
   return ok(user);
+}
+
+export async function updateUser(
+  id: string,
+  input: UserUpdateInput,
+): Promise<ActionResult<User>> {
+  const parsed = userUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return fail(issue.message, 400, issue.path[0]?.toString());
+  }
+  const data = parsed.data;
+
+  if (typeof data.rut === 'string') {
+    const rutCheck = isRut(data.rut);
+    if (!rutCheck.status) {
+      return fail(rutCheck.message, 400, 'rut');
+    }
+  }
+
+  try {
+    const user = await prisma.user.update({ where: { id }, data });
+    return ok(user);
+  } catch (error) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: unknown }).code === 'P2025'
+    ) {
+      return fail('User not found', 404);
+    }
+    const field = prismaUniqueField(error);
+    if (field) {
+      return fail(`${field} must be unique`, 409, field);
+    }
+    return fail((error as Error).message ?? 'Failed to update user', 400);
+  }
 }

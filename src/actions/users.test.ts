@@ -13,7 +13,7 @@ vi.mock('@/lib/prisma', () => ({
 }));
 
 import { prisma } from '@/lib/prisma';
-import { createUser, getUsers, getUserById, getUserByRut } from './users';
+import { createUser, getUsers, getUserById, getUserByRut, updateUser } from './users';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -152,5 +152,65 @@ describe('getUserByRut', () => {
     if (!res.ok) {
       expect(res.status).toBe(404);
     }
+  });
+});
+
+describe('updateUser', () => {
+  it('updates and returns the user on valid input', async () => {
+    const updated = { id: 'u1', ...validInput, names: 'Pedro' };
+    (prisma.user.update as any).mockResolvedValue(updated);
+
+    const res = await updateUser('u1', { names: 'Pedro' });
+
+    expect(res).toEqual({ ok: true, data: updated });
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: { names: 'Pedro' },
+    });
+  });
+
+  it('fails 400 on Zod validation error (empty names) without hitting prisma', async () => {
+    const res = await updateUser('u1', { names: '' });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(400);
+      expect(res.field).toBe('names');
+    }
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('fails 404 when Prisma throws P2025 (record not found)', async () => {
+    (prisma.user.update as any).mockRejectedValue({ code: 'P2025' });
+
+    const res = await updateUser('nonexistent', { names: 'Pedro' });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(404);
+    }
+  });
+
+  it('fails 409 with field=email on a Prisma P2002 unique violation', async () => {
+    (prisma.user.update as any).mockRejectedValue({ code: 'P2002', meta: { target: ['email'] } });
+
+    const res = await updateUser('u1', { email: 'duplicate@uc.cl' });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(409);
+      expect(res.field).toBe('email');
+    }
+  });
+
+  it('fails 400 with field=rut when the RUT check digit is invalid', async () => {
+    const res = await updateUser('u1', { rut: '11111111-9' });
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(400);
+      expect(res.field).toBe('rut');
+    }
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });
