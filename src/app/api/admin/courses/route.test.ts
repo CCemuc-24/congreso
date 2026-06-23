@@ -30,14 +30,9 @@ function makeRequest(
   opts: { headers?: Record<string, string>; body?: unknown } = {},
 ): NextRequest {
   const url = 'http://localhost/api/admin/courses';
-  const init: RequestInit = {
-    method,
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
-  };
-  if (opts.body !== undefined) {
-    init.body = JSON.stringify(opts.body);
-  }
-  return new NextRequest(url, init);
+  const headersObj = new Headers({ 'Content-Type': 'application/json', ...opts.headers });
+  const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+  return new NextRequest(url, { method, headers: headersObj, body });
 }
 
 beforeEach(() => {
