@@ -42,7 +42,7 @@ export function buildConfirmationEmailHtml({ id, courses }: ConfirmationEmailInp
 </head>
 <body>
   <div style="background-color:#e9ecef;">
-    <h1 style="margin:0;font-size:32px;font-weight:700;">Confirmación de pago</h1>
+    <h1 style="margin:0;font-size:32px;font-weight:700;">Confirmante de pago</h1>
     <p style="margin:0;">Se ha confirmado el pago de tu inscripción.</p>
     <p style="margin:0;">Tu código de confirmación es: ${id}</p>
     <table width="100%">
