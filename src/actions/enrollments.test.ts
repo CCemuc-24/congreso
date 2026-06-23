@@ -55,7 +55,7 @@ describe('createEnrollment', () => {
     mockPrisma.enrollment.findUnique.mockResolvedValue(dbEnrollment);
     const res = await createEnrollment(validInput);
     expect(mockPrisma.enrollment.findUnique).toHaveBeenCalledWith({
-      where: { userId_courseId: { userId: validInput.userId, courseId: validInput.courseId } },
+      where: { UserCourseUnique: { userId: validInput.userId, courseId: validInput.courseId } },
     });
     expect(mockPrisma.enrollment.create).not.toHaveBeenCalled();
     expect(res).toEqual({ ok: true, data: dbEnrollment });

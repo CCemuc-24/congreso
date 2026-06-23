@@ -1,7 +1,7 @@
 'use server';
 
 import { prisma } from '@/lib/prisma';
-import { assertAdmin, UnauthorizedError } from '@/lib/auth';
+import { assertAdmin } from '@/lib/auth';
 import { ActionResult, ok, fail } from '@/domain/result';
 import {
   enrollmentCreateSchema,
@@ -36,7 +36,7 @@ export async function createEnrollment(
   const { userId, courseId } = parsed.data;
   try {
     const existing = await prisma.enrollment.findUnique({
-      where: { userId_courseId: { userId, courseId } },
+      where: { UserCourseUnique: { userId, courseId } },
     });
     if (existing) return ok(existing);
 
