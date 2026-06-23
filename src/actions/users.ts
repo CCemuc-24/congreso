@@ -67,3 +67,9 @@ export async function getUsers(): Promise<ActionResult<User[]>> {
   const users = await prisma.user.findMany();
   return ok(users);
 }
+
+export async function getUserById(id: string): Promise<ActionResult<User>> {
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user) return fail('User not found', 404);
+  return ok(user);
+}
