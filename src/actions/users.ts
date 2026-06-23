@@ -62,3 +62,8 @@ export async function createUser(input: UserCreateInput): Promise<ActionResult<U
     return fail((error as Error).message ?? 'Failed to create user', 400);
   }
 }
+
+export async function getUsers(): Promise<ActionResult<User[]>> {
+  const users = await prisma.user.findMany();
+  return ok(users);
+}

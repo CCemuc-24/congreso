@@ -13,7 +13,7 @@ vi.mock('@/lib/prisma', () => ({
 }));
 
 import { prisma } from '@/lib/prisma';
-import { createUser } from './users';
+import { createUser, getUsers } from './users';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -86,5 +86,25 @@ describe('createUser', () => {
       expect(res.field).toBe('rut');
     }
     expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('getUsers', () => {
+  it('returns all users', async () => {
+    const users = [{ id: 'u1', ...validInput }, { id: 'u2', ...validInput }];
+    (prisma.user.findMany as any).mockResolvedValue(users);
+
+    const res = await getUsers();
+
+    expect(res).toEqual({ ok: true, data: users });
+    expect(prisma.user.findMany).toHaveBeenCalledWith();
+  });
+
+  it('returns empty array when no users exist', async () => {
+    (prisma.user.findMany as any).mockResolvedValue([]);
+
+    const res = await getUsers();
+
+    expect(res).toEqual({ ok: true, data: [] });
   });
 });
