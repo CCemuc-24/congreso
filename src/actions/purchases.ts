@@ -168,7 +168,8 @@ export async function confirmPurchase(
       const coreCourses = await tx.course.findMany({ where: { type: CourseType.core } });
       const coreIds = coreCourses.map((c) => c.id);
       const purchasedIds = new Set(purchase.coursesIds);
-      const allCourseIds = Array.from(new Set([...coreIds, ...purchase.coursesIds]));
+      // Purchased courses first so the oversell guard runs on them before core courses.
+      const allCourseIds = Array.from(new Set([...purchase.coursesIds, ...coreIds]));
 
       for (const courseId of allCourseIds) {
         const existing = await tx.enrollment.findUnique({
