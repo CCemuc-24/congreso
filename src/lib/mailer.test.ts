@@ -21,13 +21,26 @@ describe('sendMail', () => {
     process.env = { ...ORIGINAL };
   });
 
-  it('builds an SMTP transport from env (host, numeric port, secure, auth)', async () => {
+  it('port 465 → secure: true', async () => {
+    process.env.EMAIL_PORT = '465';
     const { sendMail } = await import('./mailer');
     await sendMail('student@uc.cl', 'Confirmación', '<p>Hola</p>');
     expect(createTransportSpy).toHaveBeenCalledWith({
       host: 'smtp.example.com',
       port: 465,
       secure: true,
+      auth: { user: 'admin@example.com', pass: 'secret' },
+    });
+  });
+
+  it('port 587 → secure: false (STARTTLS)', async () => {
+    process.env.EMAIL_PORT = '587';
+    const { sendMail } = await import('./mailer');
+    await sendMail('student@uc.cl', 'Confirmación', '<p>Hola</p>');
+    expect(createTransportSpy).toHaveBeenCalledWith({
+      host: 'smtp.example.com',
+      port: 587,
+      secure: false,
       auth: { user: 'admin@example.com', pass: 'secret' },
     });
   });

@@ -63,6 +63,16 @@ describe('FormClient', () => {
     expect(createPurchase).not.toHaveBeenCalled();
   });
 
+  it('blocks submit and shows "Falta tu RUT" (not "RUT debe contener guión") when RUT is blank', async () => {
+    render(<FormClient />);
+    fillValidForm();
+    fireEvent.change(screen.getByPlaceholderText('Ingresa tu RUT'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Inscribir y pagar'));
+    await waitFor(() => expect(screen.getByText('Falta tu RUT')).toBeInTheDocument());
+    expect(screen.queryByText('RUT debe contener guión')).not.toBeInTheDocument();
+    expect(createPurchase).not.toHaveBeenCalled();
+  });
+
   it('existing user (found by RUT) → skips createUser, no prior paid purchase → createPurchase → webpay redirect', async () => {
     getUserByRut.mockResolvedValue(ok({ id: 'u1', names: 'Ada' }));
     getUserPurchases.mockResolvedValue(ok([]));

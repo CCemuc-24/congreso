@@ -86,7 +86,7 @@ const FormClient: React.FC = () => {
     if (!rut) setErrorMessageRut('Falta tu RUT');
 
     const rutValidation = isRut(rut);
-    if (!rutValidation.status) {
+    if (rut && !rutValidation.status) {
       setShowErrorRut(true);
       setErrorMessageRut(translateRutMessage(rutValidation.message));
     }
