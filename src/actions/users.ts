@@ -73,3 +73,9 @@ export async function getUserById(id: string): Promise<ActionResult<User>> {
   if (!user) return fail('User not found', 404);
   return ok(user);
 }
+
+export async function getUserByRut(rut: string): Promise<ActionResult<User>> {
+  const user = await prisma.user.findUnique({ where: { rut } });
+  if (!user) return fail('User not found', 404);
+  return ok(user);
+}

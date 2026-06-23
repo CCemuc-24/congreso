@@ -13,7 +13,7 @@ vi.mock('@/lib/prisma', () => ({
 }));
 
 import { prisma } from '@/lib/prisma';
-import { createUser, getUsers, getUserById } from './users';
+import { createUser, getUsers, getUserById, getUserByRut } from './users';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -124,6 +124,29 @@ describe('getUserById', () => {
     (prisma.user.findUnique as any).mockResolvedValue(null);
 
     const res = await getUserById('nonexistent');
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(404);
+    }
+  });
+});
+
+describe('getUserByRut', () => {
+  it('returns the user when found by rut', async () => {
+    const user = { id: 'u1', ...validInput };
+    (prisma.user.findUnique as any).mockResolvedValue(user);
+
+    const res = await getUserByRut(validInput.rut);
+
+    expect(res).toEqual({ ok: true, data: user });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { rut: validInput.rut } });
+  });
+
+  it('fails 404 when user is not found by rut', async () => {
+    (prisma.user.findUnique as any).mockResolvedValue(null);
+
+    const res = await getUserByRut('00000000-0');
 
     expect(res.ok).toBe(false);
     if (!res.ok) {
