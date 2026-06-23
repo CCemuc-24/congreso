@@ -118,6 +118,16 @@ describe('updatePurchase (admin)', () => {
 });
 
 describe('deletePurchase (admin)', () => {
+  it('rejects when admin secret is invalid', async () => {
+    mockAssertAdmin.mockImplementation(() => {
+      throw new UnauthorizedError('Unauthorized');
+    });
+    const res = await deletePurchase('p1', 'wrong');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.status).toBe(403);
+    expect(prismaMock.purchase.delete).not.toHaveBeenCalled();
+  });
+
   it('deletes and returns ok(null)', async () => {
     prismaMock.purchase.delete.mockResolvedValue({ id: 'p1' });
     const res = await deletePurchase('p1', 'right');
