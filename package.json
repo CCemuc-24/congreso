@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "prisma generate && (DIRECT_URL=\"${DIRECT_URL:-${DATABASE_URL_UNPOOLED:-$DATABASE_URL}}\" prisma migrate deploy && tsx prisma/seed.ts || echo 'WARN: prisma migrate/seed skipped — check Vercel DB env vars') && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
