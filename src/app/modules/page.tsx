@@ -1,6 +1,7 @@
 import React from 'react';
 import Header from '@/components/header';
 import ResponsiveCard from '@/components/modulePage/moduleInfo';
+import { SectionHeading } from '@/components/luz/SectionHeading';
 import { getCourses } from '@/actions/courses';
 
 export const dynamic = 'force-dynamic';
@@ -12,16 +13,9 @@ const ModulePage = async () => {
   return (
     <div>
       <Header />
-      <div className="max-w-8xl mx-auto p-6">
-        <div className="flex justify-center mb-4">
-          <h2 className="text-3xl font-bold text-[#00778B]">MÓDULOS</h2>
-        </div>
-        <div className="flex justify-center mb-6">
-          <hr className="w-full border-t-2 border-gray-300" />
-        </div>
-      </div>
-      <div className="px-8 sm:px-8 lg:px-8">
-        <div className="max-w-7xl mx-auto grid gap-8 grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="mx-auto max-w-7xl px-6 py-16">
+        <SectionHeading eyebrow="Aprende cirugía" title="Módulos" />
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {courses
             .filter((course) => course.type !== 'workshop' && course.week !== 4)
             .map((course) => {
