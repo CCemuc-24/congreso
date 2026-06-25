@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "vercel-build": "prisma generate && (DIRECT_URL=\"${DIRECT_URL:-${DATABASE_URL_UNPOOLED:-$DATABASE_URL}}\" prisma migrate deploy && tsx prisma/seed.ts || echo 'WARN: prisma migrate/seed skipped — check Vercel DB env vars') && next build",
+    "vercel-build": "prisma generate && (export DATABASE_URL=\"${DATABASE_URL:-${CCEM_POSTGRES_PRISMA_URL:-$CCEM_DATABASE_URL}}\" DIRECT_URL=\"${DIRECT_URL:-${CCEM_DATABASE_URL_UNPOOLED:-$CCEM_POSTGRES_URL_NON_POOLING}}\" && prisma migrate deploy && tsx prisma/seed.ts || echo 'WARN: prisma migrate/seed skipped — check Vercel DB env vars') && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
@@ -17,6 +17,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "@prisma/client": "^6.19.3",
     "@vercel/analytics": "^2.0.1",
     "class-variance-authority": "^0.7.1",
