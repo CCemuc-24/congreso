@@ -13,21 +13,21 @@ const BuyInfo: React.FC<{ courses: Course[]; user: User | null }> = ({ courses, 
     return <p className="mb-8 text-muted-foreground">Cargando...</p>;
   }
 
-  const courseWeek0 = courses.filter((c) => c.week === 0);
-  const courseWeek1 = courses.find((c) => c.week === 1);
-  const courseWeek2 = courses.find((c) => c.week === 2);
-  const courseWorkshop = courses.find((c) => c.type === 'workshop');
+  const generalCourses = courses.filter((c) => c.type === 'core');
+  const moduleCourse = courses.find((c) => c.type === 'elective');
+  const workshops = courses.filter((c) => c.type === 'workshop');
   const price = courses.reduce((sum, c) => sum + c.price, 0);
 
   return (
     <div className="mb-8 rounded-xl border border-border bg-card p-6">
-      <p className="mb-3 font-mono text-xs uppercase tracking-[0.14em] text-primary">Cursos</p>
-      {courseWeek0.map((course, index) => (
-        <Row key={course.id} label={`Módulo Base ${index + 1}`} value={course.title} />
+      <p className="mb-3 font-mono text-xs uppercase tracking-[0.14em] text-primary">Tu inscripción</p>
+      {generalCourses.map((course) => (
+        <Row key={course.id} label="Módulo general" value={course.title} />
       ))}
-      <Row label="Semana 1" value={courseWeek1?.title} />
-      <Row label="Semana 2" value={courseWeek2?.title} />
-      {courseWorkshop && <Row label="Workshop" value={courseWorkshop.title} />}
+      {moduleCourse && <Row label="Módulo sincrónico" value={moduleCourse.title} />}
+      {workshops.map((workshop, index) => (
+        <Row key={workshop.id} label={`Workshop ${index + 1}`} value={workshop.title} />
+      ))}
       <Row label="Precio" value={`$${price}`} />
       <Row label="Nombre" value={`${user.names} ${user.lastNames}`} />
       <Row label="RUT" value={user.rut} />

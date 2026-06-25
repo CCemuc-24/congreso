@@ -9,10 +9,12 @@ const user = {
   createdAt: new Date(), updatedAt: new Date(),
 } as User;
 
+// 2026 bundle: general (core) + chosen module (elective, carries the ticket price) + 2 workshops.
 const courses = [
-  { id: 'c0', title: 'Base A', module: 1, type: 'core', price: 10000, capacity: 5, features: null, week: 0, topics: [], createdAt: new Date(), updatedAt: new Date() },
-  { id: 'c1', title: 'Elec 1', module: 2, type: 'elective', price: 15000, capacity: 5, features: null, week: 1, topics: [], createdAt: new Date(), updatedAt: new Date() },
-  { id: 'c2', title: 'Elec 2', module: 3, type: 'elective', price: 5000, capacity: 5, features: null, week: 2, topics: [], createdAt: new Date(), updatedAt: new Date() },
+  { id: 'g0', title: 'Módulo General', module: 1, type: 'core', price: 0, capacity: 1000, features: null, week: 0, topics: [], createdAt: new Date(), updatedAt: new Date() },
+  { id: 'm1', title: 'Módulo Ginecología', module: 4, type: 'elective', price: 25900, capacity: 1000, features: null, week: 1, topics: [], createdAt: new Date(), updatedAt: new Date() },
+  { id: 'w1', title: 'Workshop Suturas', module: 6, type: 'workshop', price: 0, capacity: 20, features: null, week: 3, topics: [], createdAt: new Date(), updatedAt: new Date() },
+  { id: 'w2', title: 'Workshop RCP avanzado', module: 7, type: 'workshop', price: 0, capacity: 20, features: null, week: 3, topics: [], createdAt: new Date(), updatedAt: new Date() },
 ] as unknown as Course[];
 
 describe('BuyInfo', () => {
@@ -26,12 +28,13 @@ describe('BuyInfo', () => {
     expect(screen.getByText('Cargando...')).toBeTruthy();
   });
 
-  it('renders courses, summed price and user details', () => {
+  it('renders the general module, chosen module, workshops, ticket price and user details', () => {
     render(<BuyInfo courses={courses} user={user} />);
-    expect(screen.getByText('Base A')).toBeTruthy();
-    expect(screen.getByText('Elec 1')).toBeTruthy();
-    expect(screen.getByText('Elec 2')).toBeTruthy();
-    expect(screen.getByText('$30000')).toBeTruthy(); // 10000+15000+5000
+    expect(screen.getByText('Módulo General')).toBeTruthy();
+    expect(screen.getByText('Módulo Ginecología')).toBeTruthy();
+    expect(screen.getByText('Workshop Suturas')).toBeTruthy();
+    expect(screen.getByText('Workshop RCP avanzado')).toBeTruthy();
+    expect(screen.getByText('$25900')).toBeTruthy(); // ticket price rides on the module
     expect(screen.getByText('Ada Lovelace')).toBeTruthy();
     expect(screen.getByText('11.111.111-1')).toBeTruthy();
     expect(screen.getByText('ada@example.com')).toBeTruthy();

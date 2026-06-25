@@ -19,9 +19,11 @@ type SeedCourse = {
 // (choose 2 of 10). Workshops are the capacity-limited item.
 //
 // `module` (1–8) selects the card image (src/components/images/cards/<n>.png).
-// Prices are 0 here because everything is bundled into one ticket — the ticket
-// price lives in the registration UI (see /pricing). Capacities: workshops 20
+// The single bundled ticket costs TICKET_PRICE. A student always selects exactly
+// one synchronous module, so the ticket price rides on that module; the general
+// module and the workshops are $0 (included). Capacities: workshops 20
 // (tentative), modules generous. Topics/horarios pending from the committee.
+const TICKET_PRICE = 25900;
 const GENERAL_FEATURES = {
   Modalidad: 'Clases magistrales presenciales',
   Lugar: 'Campus Casa Central. Auditorio por definir.',
@@ -76,7 +78,7 @@ const courses: SeedCourse[] = [
     title: m.title,
     module: m.module,
     type: CourseType.elective,
-    price: 0,
+    price: TICKET_PRICE,
     capacity: 1000,
     week: 1,
     features: {

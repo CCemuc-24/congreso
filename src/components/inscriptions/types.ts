@@ -15,6 +15,9 @@ export interface WeekSectionProps {
   subtitle: string;
   courses: Course[];
   handleSelectCourse: (course: Course) => void;
-  selectedWeek: Course | null;
   weekNumber: number;
+  // Single-select mode (modules): the currently chosen course.
+  selectedWeek?: Course | null;
+  // Multi-select mode (workshops): the set of chosen course ids.
+  selectedIds?: string[];
 }

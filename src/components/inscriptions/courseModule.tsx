@@ -43,7 +43,8 @@ const CourseModule: React.FC<EventsCardProps> = ({ title, module, features, butt
         ) : (
           <button
             type="button"
-            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 font-medium text-primary-foreground"
+            onClick={actionOnClick}
+            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 font-medium text-primary-foreground transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <Check className="h-4 w-4" />
             Seleccionado

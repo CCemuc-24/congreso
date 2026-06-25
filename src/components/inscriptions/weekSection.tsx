@@ -2,7 +2,18 @@ import React from 'react';
 import CourseModule from '@/components/inscriptions/courseModule';
 import type { WeekSectionProps } from './types';
 
-const WeekSection: React.FC<WeekSectionProps> = ({ title, subtitle, courses, handleSelectCourse, selectedWeek, weekNumber }) => {
+const WeekSection: React.FC<WeekSectionProps> = ({
+  title,
+  subtitle,
+  courses,
+  handleSelectCourse,
+  weekNumber,
+  selectedWeek,
+  selectedIds,
+}) => {
+  const isClicked = (id: string): boolean =>
+    selectedIds ? selectedIds.includes(id) : selectedWeek?.id === id;
+
   return (
     <div className="container mx-auto p-4">
       <div className="mb-4 flex items-baseline gap-3">
@@ -19,9 +30,13 @@ const WeekSection: React.FC<WeekSectionProps> = ({ title, subtitle, courses, han
               title={event.title}
               module={event.module}
               features={(event.features ?? {}) as Record<string, string>}
-              buttonText={`${event.capacity} cupos disponibles`}
+              buttonText={
+                event.type === 'workshop'
+                  ? `${event.capacity} cupos disponibles`
+                  : 'Seleccionar módulo'
+              }
               actionOnClick={() => handleSelectCourse(event)}
-              clicked={selectedWeek?.id === event.id}
+              clicked={isClicked(event.id)}
             />
           ))}
       </div>
