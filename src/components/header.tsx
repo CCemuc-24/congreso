@@ -6,7 +6,6 @@ import Image from 'next/image';
 import { Menu, X } from 'lucide-react';
 import logo from '@/components/images/Logo BW.png';
 import sections from '@/utils/sections.json';
-import { cn } from '@/lib/utils';
 
 const Header: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
