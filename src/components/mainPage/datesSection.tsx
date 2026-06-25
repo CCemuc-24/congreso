@@ -1,80 +1,37 @@
 import React from 'react';
-import fondo from '@/components/images/mainPage/calendario.png';
-import Image from 'next/image';
-import { Open_Sans, Lato } from 'next/font/google';
-
-const openSans = Open_Sans({
-  subsets: ['latin'],
-  weight: '400',
-});
-const lato = Lato({
-  subsets: ['latin'],
-  weight: '700',
-});
+import { SectionHeading } from '@/components/luz/SectionHeading';
 
 const schedule = [
+  { date: 'Sábado 31 de agosto', event: '1° Jornada presencial CCEM UC 2024' },
   {
-    date: 'Sábado 31 de agosto',
-    event: '1° Jornada presencial CCEM UC 2024',
-  },
-  {
-    date: 'Lunes 02 de septiembre al miércoles 04 de septiembre',
+    date: 'Lun 02 — Mié 04 de septiembre',
     event: 'Módulo Cirugía Digestiva y Coloproctología\nMódulo Cirugía de Trauma y Urología',
   },
+  { date: 'Sábado 07 de septiembre', event: '2° Jornada presencial CCEM UC 2024' },
   {
-    date: 'Sábado 07 de septiembre',
-    event: '2° Jornada presencial CCEM UC 2024',
-  },
-  {
-    date: 'Lunes 09 de septiembre al miércoles 11 de septiembre',
+    date: 'Lun 09 — Mié 11 de septiembre',
     event: 'Módulo Cirugía Plástica y Oncológica\nMódulo Cirugía de Tórax, Cardíaca y Vascular',
   },
-  {
-    date: 'Viernes 13 de septiembre',
-    event: 'Competencia Científica CCEM UC',
-  },
-  {
-    date: 'Sábado 14 de septiembre',
-    event: '3° Jornada presencial CCEM UC 2024',
-  },
+  { date: 'Viernes 13 de septiembre', event: 'Competencia Científica CCEM UC' },
+  { date: 'Sábado 14 de septiembre', event: '3° Jornada presencial CCEM UC 2024' },
 ];
 
 const DatesSection: React.FC = () => {
   return (
-    <div>
-      <div className="flex justify-center mb-4">
-        <h2 className="text-3xl font-bold text-[#00778B]">FECHAS</h2>
-      </div>
-      <div className="flex justify-center mb-6">
-        <hr className="w-full border-t-2 border-gray-300" />
-      </div>
-
-      <div className="flex justify-center">
-        <Image
-          src={fondo}
-          alt="Calendario CCEM UC"
-          className="rounded-lg object-cover"
-          width={729}
-          height={729}
-        />
-      </div>
-      <div className="max-w-8xl mx-auto p-6">
+    <section className="mx-auto max-w-5xl px-6 py-16">
+      <SectionHeading eyebrow="Calendario" title="Fechas" />
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
         {schedule.map((item, index) => (
-          <div key={index} className="flex flex-col lg:flex-row mb-4">
-            <div
-              className={`lg:w-1/2 font-bold pr-4 ${lato.className} text-base md:text-lg lg:text-xl xl:text-2xl`}
-            >
-              {item.date}
-            </div>
-            <div
-              className={`lg:w-1/2 whitespace-pre-line ${openSans.className} text-base md:text-lg lg:text-xl xl:text-2xl`}
-            >
-              {item.event}
-            </div>
+          <div
+            key={index}
+            className="grid gap-2 border-b border-border px-6 py-5 last:border-b-0 md:grid-cols-[0.9fr_1.1fr] md:items-center"
+          >
+            <span className="font-mono text-sm uppercase tracking-[0.08em] text-primary">{item.date}</span>
+            <span className="whitespace-pre-line font-display font-medium text-foreground">{item.event}</span>
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 };
 
