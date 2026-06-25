@@ -7,6 +7,8 @@ import Header from '@/components/header';
 import WeekSection from '@/components/inscriptions/weekSection';
 import { getCourses } from '@/actions/courses';
 import type { Course } from '@/actions/courses';
+import { SectionHeading } from '@/components/luz/SectionHeading';
+import { cn } from '@/lib/utils';
 
 const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOpen }) => {
   const [courses, setCourses] = useState<Course[]>([]);
@@ -53,16 +55,16 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
     return (
       <div>
         <Header />
-        <section className="bg-white dark:bg-gray-900">
+        <section className="bg-background">
           <div className="container flex items-center min-h-screen px-6 py-12 mx-auto">
             <div>
-              <h1 className="mt-3 text-2xl font-semibold text-gray-800 dark:text-white md:text-3xl">No disponible</h1>
-              <p className="mt-4 text-gray-500 dark:text-gray-400">
+              <h1 className="mt-3 text-2xl font-display font-semibold text-foreground md:text-3xl">No disponible</h1>
+              <p className="mt-4 text-muted-foreground">
                 Lo sentimos, ya no esta disponible la inscripción de cursos
               </p>
               <div className="flex items-center mt-6 gap-x-3">
                 <Link href="/">
-                  <button className="w-1/2 px-5 py-2 text-sm tracking-wide text-white transition-colors duration-200 bg-blue-500 rounded-lg shrink-0 sm:w-auto hover:bg-blue-600 dark:hover:bg-blue-500 dark:bg-blue-600">
+                  <button className="w-1/2 px-5 py-2 text-sm tracking-wide text-primary-foreground transition-colors duration-200 bg-primary rounded-lg shrink-0 sm:w-auto hover:bg-primary-700">
                     Ir a inicio
                   </button>
                 </Link>
@@ -78,10 +80,10 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
     return (
       <div>
         <Header />
-        <div className="min-h-screen overflow-auto flex items-center justify-center" style={{ background: '#edf2f7' }}>
+        <div className="min-h-screen overflow-auto flex items-center justify-center bg-background">
           <section className="px-4 py-12">
             <div className="container mx-auto text-center">
-              <h4 className="block antialiased tracking-normal font-sans text-4xl font-semibold leading-[1.3] text-blue-gray-900 mb-4">
+              <h4 className="font-display text-4xl font-semibold leading-[1.3] text-foreground mb-4">
                 Cargando cursos...
               </h4>
             </div>
@@ -95,39 +97,34 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
     <div>
       <Header />
       <div className="mt-10">
-        <div className="flex justify-center mb-4">
-          <h2 className="text-3xl font-bold text-[#00778B]">INSCRIPCIONES</h2>
-        </div>
-        <div className="flex justify-center mb-6">
-          <hr className="w-full border-t-2 border-gray-300" />
-        </div>
+        <SectionHeading eyebrow="Asegura tu cupo" title="INSCRIPCIONES" />
       </div>
 
       <div className="container mx-auto p-4">
-        <div className="flex items-center mb-4">
-          <h1 className="font-lato text-3xl md:text-4xl lg:text-5xl font-light text-[#6D6D6D]">Paso 1</h1>
-          <h2 className="font-open-sans text-xl md:text-2xl lg:text-3xl font-light text-[#6D6D6D] ml-2">
-            Selecciona tu pase
-          </h2>
+        <div className="mb-4 flex items-baseline gap-3">
+          <h1 className="font-display text-3xl font-semibold text-primary md:text-4xl">Paso 1</h1>
+          <h2 className="text-xl text-muted-foreground md:text-2xl">Selecciona tu pase</h2>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <button
-            className={`bg-[#116D85] text-white py-2 px-6 rounded-[8px] transition-colors flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0 sm:space-x-4 ${selectedPass === 1 ? 'bg-green-500' : 'hover:bg-[#0E5B6D]'}`}
+            className={cn(
+              'flex flex-col items-center justify-between gap-2 rounded-xl border bg-card p-6 text-left transition-colors sm:flex-row sm:gap-4',
+              selectedPass === 1 ? 'border-primary ring-2 ring-primary' : 'border-border hover:border-primary',
+            )}
             onClick={() => handleSelectPass(1)}
           >
-            <span className="font-open-sans text-base sm:text-lg md:text-2xl lg:text-2xl xl:text-2xl">
-              Pase General Congreso
-            </span>
-            <span className="font-open-sans text-base sm:text-2lg md:text-2xl lg:text-2xl xl:text-2xl">$25.900</span>
+            <span className="font-display text-lg md:text-2xl text-foreground">Pase General Congreso</span>
+            <span className="font-mono text-xl md:text-2xl text-primary">$25.900</span>
           </button>
           <button
-            className={`bg-[#116D85] text-white py-2 px-6 rounded-[8px] transition-colors flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0 sm:space-x-4 ${selectedPass === 2 ? 'bg-green-500' : 'hover:bg-[#0E5B6D]'}`}
+            className={cn(
+              'flex flex-col items-center justify-between gap-2 rounded-xl border bg-card p-6 text-left transition-colors sm:flex-row sm:gap-4',
+              selectedPass === 2 ? 'border-primary ring-2 ring-primary' : 'border-border hover:border-primary',
+            )}
             onClick={() => handleSelectPass(2)}
           >
-            <span className="font-open-sans text-base sm:text-lg md:text-2xl lg:text-2xl xl:text-2xl">
-              Pase Congreso + Workshop
-            </span>
-            <span className="font-open-sans text-base sm:text-2lg md:text-2xl lg:text-2xl xl:text-2xl">$28.900</span>
+            <span className="font-display text-lg md:text-2xl text-foreground">Pase Congreso + Workshop</span>
+            <span className="font-mono text-xl md:text-2xl text-primary">$28.900</span>
           </button>
         </div>
       </div>
@@ -164,15 +161,16 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
       </div>
 
       <div className="container mx-auto p-4">
-        <div className="flex items-center mb-4">
-          <h1 className="font-lato text-3xl md:text-4xl lg:text-5xl font-light text-[#6D6D6D]">Paso 5</h1>
-          <h2 className="font-open-sans text-xl md:text-2xl lg:text-3xl font-light text-[#6D6D6D] ml-2">
-            Procede al pago
-          </h2>
+        <div className="mb-4 flex items-baseline gap-3">
+          <h1 className="font-display text-3xl font-semibold text-primary md:text-4xl">Paso 5</h1>
+          <h2 className="text-xl text-muted-foreground md:text-2xl">Procede al pago</h2>
         </div>
         <button
           onClick={handleConfirmSelection}
-          className={`px-8 py-4 text-white font-semibold rounded-lg shadow-md focus:outline-none ${!isAllCoursesSelected() ? 'disabled cursor-not-allowed bg-gray-400' : 'bg-green-700 hover:bg-green-800'}`}
+          className={cn(
+            'rounded-lg px-8 py-4 font-medium text-primary-foreground shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring',
+            !isAllCoursesSelected() ? 'cursor-not-allowed bg-muted-foreground/40' : 'bg-primary hover:bg-primary-700',
+          )}
           disabled={!isAllCoursesSelected()}
         >
           Confirmar
