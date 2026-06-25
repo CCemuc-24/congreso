@@ -5,23 +5,23 @@ import { resolve } from 'node:path';
 const css = readFileSync(resolve(__dirname, 'src/app/globals.css'), 'utf-8');
 
 describe('globals.css (Tailwind v4)', () => {
-  it('defines primary-500', () => {
-    expect(css).toContain('--color-primary-500: #3b82f6');
+  it('defines primary-500 (Luz surgical-teal ramp)', () => {
+    expect(css).toContain('--color-primary-500: #1c807a');
   });
 
-  it('defines primary-950', () => {
-    expect(css).toContain('--color-primary-950: #172554');
+  it('defines primary-950 (Luz surgical-teal ramp)', () => {
+    expect(css).toContain('--color-primary-950: #052424');
   });
 
   it('imports tailwindcss (v4 directive)', () => {
-    expect(css).toContain('@import "tailwindcss"');
+    expect(css).toContain("@import 'tailwindcss'");
   });
 
-  it('imports League Spartan font', () => {
-    expect(css).toContain('League+Spartan');
-  });
-
-  it('defines .font-league-spartan class', () => {
+  it('defines .font-league-spartan class (legacy alias → Space Grotesk)', () => {
     expect(css).toContain('.font-league-spartan');
+  });
+
+  it('defines Luz background token', () => {
+    expect(css).toContain('--background: #f4f7f6');
   });
 });
