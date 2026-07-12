@@ -1,14 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import courseImagesDictionary from './images';
+import { getCourseImage } from './images';
 
-describe('courseImagesDictionary', () => {
-  it('maps card indexes 1..8 to an image with a src', () => {
-    for (let i = 1; i <= 8; i++) {
-      const img = courseImagesDictionary[i];
-      expect(img).toBeDefined();
-      const src = typeof img === 'string' ? img : img.src;
-      expect(typeof src).toBe('string');
-      expect(src.length).toBeGreaterThan(0);
-    }
+describe('getCourseImage', () => {
+  const cases: [string, string][] = [
+    ['Módulo: Cirugía Vascular', 'cirugia-vascular'],
+    ['Módulo: Cirugía Digestiva y Coloproctología', 'digestiva-coloproctologia'],
+    ['Módulo: Ginecología y Obstetricia', 'ginecologia-obstetricia'],
+    ['Workshop: Tacto rectal', 'tacto-rectal'],
+    ['Workshop: Examen ginecológico', 'examen-ginecologico'],
+    ['Workshop: E-FAST', 'efast'],
+    ['Workshop: ECG en contexto quirúrgico', 'ecg'],
+    ['Workshop: Intubación', 'intubacion'],
+    ['Workshop: Suturas', 'suturas'],
+    ['Workshop: RCP avanzado', 'rcp-avanzado'],
+    ['Workshop: Curaciones', 'curaciones'],
+    ['Workshop: Interpretación de imágenes en contexto quirúrgico', 'interpretacion-imagenes'],
+    ['Workshop: Accesos venosos', 'accesos-venosos'],
+  ];
+
+  it.each(cases)('matches "%s" to its %s image', (title, expectedSlug) => {
+    const image = getCourseImage(title);
+    const src = typeof image === 'string' ? image : image.src;
+    expect(src).toContain(expectedSlug);
+  });
+
+  it('falls back to the general image for an unmatched title', () => {
+    const image = getCourseImage('Módulo General: Cirugía en pacientes complejos');
+    const src = typeof image === 'string' ? image : image.src;
+    expect(src).toContain('general-cirugia-innovacion');
   });
 });

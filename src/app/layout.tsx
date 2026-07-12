@@ -24,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="es" className={`${inter.variable} ${spaceGrotesk.variable} ${spaceMono.variable}`}>
+    <html lang="es" className={`${inter.variable} ${spaceGrotesk.variable} ${spaceMono.variable}`} suppressHydrationWarning>
       <body className={inter.className}>{children}<Analytics /></body>
     </html>
   );

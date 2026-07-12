@@ -28,7 +28,6 @@ const WeekSection: React.FC<WeekSectionProps> = ({
               key={event.id}
               id={event.id}
               title={event.title}
-              module={event.module}
               features={(event.features ?? {}) as Record<string, string>}
               buttonText={
                 event.type === 'workshop'

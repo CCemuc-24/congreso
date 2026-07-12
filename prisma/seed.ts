@@ -18,7 +18,8 @@ type SeedCourse = {
 // ONE synchronous online module (choose 1 of 3) + TWO presential workshops
 // (choose 2 of 10). Workshops are the capacity-limited item.
 //
-// `module` (1–8) selects the card image (src/components/images/cards/<n>.png).
+// The card image shown per course is picked by matching a keyword against the
+// course title (see src/components/images/images.ts), not by `module`.
 // The single bundled ticket costs TICKET_PRICE. A student always selects exactly
 // one synchronous module, so the ticket price rides on that module; the general
 // module and the workshops are $0 (included). Capacities: workshops 20
@@ -90,7 +91,6 @@ const courses: SeedCourse[] = [
   // ── Workshops — choose 2 of 10, presential, 24/10 ──
   ...WORKSHOP_TITLES.map((title, i) => ({
     title,
-    // 10 workshops cycle through the 8 available card images.
     module: (i % 8) + 1,
     type: CourseType.workshop,
     price: 0,

@@ -2,20 +2,19 @@ import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
-import courseImagesDictionary from '@/components/images/images';
+import { getCourseImage } from '@/components/images/images';
 
 export interface ResponsiveCardProps {
   title: string;
   extraInfo: string;
-  imageIndex: number;
   topics: string[];
 }
 
-const ResponsiveCard: React.FC<ResponsiveCardProps> = ({ title, extraInfo, imageIndex, topics }) => {
+const ResponsiveCard: React.FC<ResponsiveCardProps> = ({ title, extraInfo, topics }) => {
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
       <Image
-        src={courseImagesDictionary[imageIndex]}
+        src={getCourseImage(title)}
         alt=""
         width={500}
         height={500}

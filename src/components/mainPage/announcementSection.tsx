@@ -1,7 +1,7 @@
 import React from 'react';
 import Image from 'next/image';
-import Foto1 from '@/components/images/mainPage/Foto Anuncio 1.png';
-import Foto2 from '@/components/images/mainPage/Foto Anuncio 2.png';
+import Foto1 from '@/components/images/mainPage/anuncio-informacion-general.png';
+import Foto2 from '@/components/images/mainPage/anuncio-competencia-cientifica.jpeg';
 import { SectionHeading } from '@/components/luz/SectionHeading';
 
 const announcements = [

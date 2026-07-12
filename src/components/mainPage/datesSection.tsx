@@ -20,7 +20,7 @@ const schedule = [
   },
   { date: 'Sábado 24/10', event: 'Workshops presenciales' },
   {
-    date: '03/10 y 24/10',
+    date: 'Sáb 03/10 y 24/10',
     event: 'Competencia Científica · presentación de trabajos y finalistas',
   },
 ];

@@ -25,7 +25,6 @@ const ModulePage = async () => {
                   key={course.id}
                   title={course.title}
                   extraInfo={features.Lugar ?? ''}
-                  imageIndex={course.module}
                   topics={course.topics}
                 />
               );

@@ -3,7 +3,6 @@ import type { Course } from '@/actions/courses';
 export interface EventsCardProps {
   id: string;
   title: string;
-  module: number;
   features: Record<string, string>;
   buttonText: string;
   actionOnClick: () => void;

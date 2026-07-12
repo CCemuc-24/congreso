@@ -25,12 +25,12 @@ const Header: React.FC = () => {
           </span>
         </Link>
 
-        <ul className="hidden items-center gap-7 lg:flex">
+        <ul className="hidden items-stretch gap-7 lg:flex">
           {sections.sections.map((section, index) => (
-            <li key={index}>
+            <li key={index} className="flex">
               <Link
                 href={section.link}
-                className="text-sm text-foreground/80 transition-colors hover:text-primary"
+                className="flex items-center justify-center text-center text-sm text-foreground/80 transition-colors hover:text-primary"
               >
                 {section.title}
               </Link>

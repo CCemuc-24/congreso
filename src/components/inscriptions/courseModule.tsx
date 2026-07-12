@@ -1,11 +1,11 @@
 import React from 'react';
 import Image from 'next/image';
 import { Check, Users } from 'lucide-react';
-import courseImagesDictionary from '@/components/images/images';
+import { getCourseImage } from '@/components/images/images';
 import { cn } from '@/lib/utils';
 import type { EventsCardProps } from './types';
 
-const CourseModule: React.FC<EventsCardProps> = ({ title, module, features, buttonText, actionOnClick, clicked }) => {
+const CourseModule: React.FC<EventsCardProps> = ({ title, features, buttonText, actionOnClick, clicked }) => {
   return (
     <div
       className={cn(
@@ -14,7 +14,7 @@ const CourseModule: React.FC<EventsCardProps> = ({ title, module, features, butt
       )}
     >
       <Image
-        src={courseImagesDictionary[module]}
+        src={getCourseImage(title)}
         alt=""
         width={300}
         height={300}
