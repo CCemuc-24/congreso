@@ -29,6 +29,24 @@ const RetryButton: React.FC = () => (
   </Link>
 );
 
+// Only the already-paid redirect (see FormClient's checkIfUserAlreadyPaid)
+// sets both alreadyPaid=true and purchaseId — every other /error redirect
+// omits purchaseId, so this stays hidden for actual payment failures.
+const ViewConfirmationButton: React.FC = () => {
+  const searchParams = useSearchParams();
+  const alreadyPaid = searchParams.get('alreadyPaid');
+  const purchaseId = searchParams.get('purchaseId');
+  if (alreadyPaid !== 'true' || !purchaseId) return null;
+  return (
+    <Link
+      href={`/confirmation?purchaseId=${purchaseId}`}
+      className="inline-block rounded-lg border border-border px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+    >
+      Ver confirmación
+    </Link>
+  );
+};
+
 const OrderError: React.FC = () => {
   return (
     <div>
@@ -45,9 +63,14 @@ const OrderError: React.FC = () => {
           <Suspense fallback={<p>Cargando...</p>}>
             <ErrorMessage />
           </Suspense>
-          <Suspense>
-            <RetryButton />
-          </Suspense>
+          <div className="flex flex-wrap items-center gap-3">
+            <Suspense>
+              <RetryButton />
+            </Suspense>
+            <Suspense>
+              <ViewConfirmationButton />
+            </Suspense>
+          </div>
         </div>
       </section>
     </div>

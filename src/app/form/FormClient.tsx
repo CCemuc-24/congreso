@@ -146,14 +146,21 @@ const FormClient: React.FC = () => {
     const purchases = res.data;
     const paid = purchases.find((p) => p.isPaid);
     if (paid) {
-      router.push(`/error/?message=Codigo de confirmacion ${paid.id}&alreadyPaid=true`);
+      router.push(`/error/?message=Codigo de confirmacion ${paid.id}&alreadyPaid=true&purchaseId=${paid.id}`);
       return true;
     }
     return false;
   };
 
   const createPurchaseAndRedirect = async (userId: string) => {
-    const res = await createPurchase({ userId, coursesIds: search });
+    // Operator-only: ?testCode=… quotes the purchase at PAYMENT_TEST_AMOUNT_CLP so
+    // the live payment path can be exercised with a real card. Forwarded blindly
+    // and never validated here — the server decides, and it is inert unless
+    // PAYMENT_TEST_CODE is set there, so a visitor guessing at the param just pays
+    // the normal price. `?? undefined` because get() returns null when absent and
+    // the action's schema types the field as optional.
+    const testCode = searchParams.get('testCode') ?? undefined;
+    const res = await createPurchase({ userId, coursesIds: search, testCode });
     if (!res.ok) {
       router.push(`/error/?message=${encodeURIComponent(res.error)}`);
       return;

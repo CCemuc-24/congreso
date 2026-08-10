@@ -1,11 +1,19 @@
 'use client';
-import React, { Suspense } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Loader2 } from 'lucide-react';
 import Header from '@/components/header';
 import BuyInfo from '@/components/buyInfo';
 import { useConfirmation } from '@/components/inscriptions/useConfirmation';
+
+// How long the "¡Correo enviado!" acknowledgement stays up before the button
+// switches to a plain countdown, and how long that countdown blocks re-sends
+// (avoids hammering the mail action with repeat clicks).
+const SENT_ACK_MS = 1800;
+const RESEND_COOLDOWN_SECONDS = 30;
+
+type ResendPhase = 'idle' | 'sending' | 'sent' | 'cooldown';
 
 const ConfirmationContent: React.FC = () => {
   const searchParams = useSearchParams();
@@ -14,6 +22,40 @@ const ConfirmationContent: React.FC = () => {
   // No token_ws, no TBK_* handling: /api/webpay/return already committed the
   // payment and redirected failures straight to /error.
   const { status, courses, user, resendEmail } = useConfirmation({ purchaseId });
+
+  const [resendPhase, setResendPhase] = useState<ResendPhase>('idle');
+  const [cooldown, setCooldown] = useState(0);
+  const sentTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cooldownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (sentTimeoutRef.current) clearTimeout(sentTimeoutRef.current);
+      if (cooldownIntervalRef.current) clearInterval(cooldownIntervalRef.current);
+    },
+    [],
+  );
+
+  const handleResend = useCallback(async () => {
+    if (resendPhase !== 'idle') return;
+    setResendPhase('sending');
+    await resendEmail();
+    setResendPhase('sent');
+    sentTimeoutRef.current = setTimeout(() => {
+      setResendPhase('cooldown');
+      setCooldown(RESEND_COOLDOWN_SECONDS);
+      cooldownIntervalRef.current = setInterval(() => {
+        setCooldown((seconds) => {
+          if (seconds <= 1) {
+            if (cooldownIntervalRef.current) clearInterval(cooldownIntervalRef.current);
+            setResendPhase('idle');
+            return 0;
+          }
+          return seconds - 1;
+        });
+      }, 1000);
+    }, SENT_ACK_MS);
+  }, [resendPhase, resendEmail]);
 
   const removeLocalStorage = () => localStorage.removeItem('user_id');
 
@@ -64,12 +106,35 @@ const ConfirmationContent: React.FC = () => {
         </Link>
         <button
           type="button"
-          onClick={() => void resendEmail()}
-          className="rounded-lg border border-border px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+          onClick={() => void handleResend()}
+          disabled={resendPhase !== 'idle'}
+          className={`inline-flex items-center gap-2 rounded-lg border px-5 py-2.5 text-sm font-medium transition-colors duration-300 ${
+            resendPhase === 'sent'
+              ? 'border-primary bg-primary-50 text-primary-700'
+              : resendPhase === 'idle'
+                ? 'border-border text-foreground hover:bg-muted'
+                : 'cursor-not-allowed border-border text-muted-foreground'
+          }`}
         >
-          Reenviar correo
+          {resendPhase === 'sending' && <Loader2 className="h-4 w-4 animate-spin" />}
+          {resendPhase === 'sent' && (
+            <CheckCircle2 className="h-4 w-4 animate-in zoom-in-50 duration-300" />
+          )}
+          <span>
+            {resendPhase === 'idle' && 'Reenviar correo'}
+            {resendPhase === 'sending' && 'Enviando...'}
+            {resendPhase === 'sent' && '¡Correo enviado!'}
+            {resendPhase === 'cooldown' && `Reenviar correo (${cooldown}s)`}
+          </span>
         </button>
       </div>
+      <p className="mt-6 text-sm text-muted-foreground">
+        ¿Tienes problemas? Escríbenos a{' '}
+        <a href="mailto:contacto@ccem.cl" className="font-medium text-foreground underline-offset-4 hover:underline">
+          contacto@ccem.cl
+        </a>
+        .
+      </p>
     </div>
   );
 };

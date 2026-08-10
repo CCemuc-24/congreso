@@ -50,36 +50,62 @@ describe('PricingClient', () => {
 
     // pick 1 of 3 modules
     fireEvent.click(screen.getAllByText('Seleccionar módulo')[0]);
-    // pick 2 of 3 workshops
-    const workshopButtons = screen.getAllByText('20 cupos disponibles');
-    fireEvent.click(workshopButtons[0]);
-    fireEvent.click(workshopButtons[1]);
+    // pick 2 of 3 workshops — the list of pickable cards shrinks with each click
+    fireEvent.click(screen.getAllByText('Elegir este workshop')[0]);
+    fireEvent.click(screen.getAllByText('Elegir este workshop')[0]);
 
     fireEvent.click(screen.getByText('Confirmar'));
     expect(push).toHaveBeenCalledWith('/form?w1id=m1&w2id=w1&w3id=w2');
   });
 
-  it('caps workshop selection at 2 (a 3rd click is ignored)', async () => {
+  it('locks the remaining workshops once 2 are chosen, and a click on them is ignored', async () => {
     render(<PricingClient registrationOpen={true} />);
     await waitFor(() => expect(screen.getByText('INSCRIPCIONES')).toBeInTheDocument());
 
     fireEvent.click(screen.getAllByText('Seleccionar módulo')[0]);
-    const workshopButtons = screen.getAllByText('20 cupos disponibles');
-    fireEvent.click(workshopButtons[0]);
-    fireEvent.click(workshopButtons[1]);
-    // 3rd workshop is still available (cap reached) and clicking it does not select
-    fireEvent.click(workshopButtons[2]);
+    fireEvent.click(screen.getAllByText('Elegir este workshop')[0]);
+    fireEvent.click(screen.getAllByText('Elegir este workshop')[0]);
 
+    // the 3rd workshop is visibly locked instead of looking pickable
+    const locked = screen.getByText('Ya elegiste 2 — quita uno para cambiar');
+    expect(locked.closest('button')).toBeDisabled();
+    expect(screen.queryByText('Elegir este workshop')).not.toBeInTheDocument();
+
+    fireEvent.click(locked);
     fireEvent.click(screen.getByText('Confirmar'));
     expect(push).toHaveBeenCalledWith('/form?w1id=m1&w2id=w1&w3id=w2');
   });
 
-  it('does not navigate until a module and 2 workshops are chosen', async () => {
+  it('labels the unchosen modules as a replacement once one is picked', async () => {
+    render(<PricingClient registrationOpen={true} />);
+    await waitFor(() => expect(screen.getByText('INSCRIPCIONES')).toBeInTheDocument());
+
+    expect(screen.getAllByText('Seleccionar módulo')).toHaveLength(3);
+    fireEvent.click(screen.getAllByText('Seleccionar módulo')[0]);
+
+    expect(screen.getAllByText('Cambiar a este módulo')).toHaveLength(2);
+    expect(screen.getByText('Tu elección')).toBeInTheDocument();
+  });
+
+  it('clears the module when its selected card is clicked again', async () => {
     render(<PricingClient registrationOpen={true} />);
     await waitFor(() => expect(screen.getByText('INSCRIPCIONES')).toBeInTheDocument());
 
     fireEvent.click(screen.getAllByText('Seleccionar módulo')[0]);
-    fireEvent.click(screen.getAllByText('20 cupos disponibles')[0]); // only 1 workshop
+    fireEvent.click(screen.getByText('Seleccionado — quitar'));
+
+    expect(screen.getAllByText('Seleccionar módulo')).toHaveLength(3);
+    expect(screen.queryByText('Cambiar a este módulo')).not.toBeInTheDocument();
+  });
+
+  it('does not navigate until a module and 2 workshops are chosen, and says what is missing', async () => {
+    render(<PricingClient registrationOpen={true} />);
+    await waitFor(() => expect(screen.getByText('INSCRIPCIONES')).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByText('Seleccionar módulo')[0]);
+    fireEvent.click(screen.getAllByText('Elegir este workshop')[0]); // only 1 workshop
+
+    expect(screen.getByText('Para continuar: elige 1 workshop más.')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Confirmar'));
     expect(push).not.toHaveBeenCalled();

@@ -9,6 +9,7 @@ import { CourseType } from '@/domain/courseType';
 import { PaymentStatus } from '@/domain/paymentStatus';
 import { assertAdmin } from '@/lib/auth';
 import { sendPurchaseConfirmation, PurchaseNotFoundError } from '@/lib/purchaseEmail';
+import { resolveTestPaymentAmount } from '@/lib/testPayment';
 import {
   purchaseCreateSchema,
   type PurchaseCreateInput,
@@ -70,7 +71,7 @@ export async function createPurchase(
     const issue = parsed.error.issues[0];
     return fail(issue.message, 400, issue.path[0]?.toString());
   }
-  const { userId, coursesIds } = parsed.data;
+  const { userId, coursesIds, testCode } = parsed.data;
 
   // Validate all courses exist + have capacity (port of validatePurchase).
   const courses = await prisma.course.findMany({ where: { id: { in: coursesIds } } });
@@ -84,7 +85,15 @@ export async function createPurchase(
   // The amount is frozen here, before the redirect, because the return handler
   // verifies Transbank's committed amount against it. Recomputing at commit time
   // would reject legitimate payments whenever a price changed mid-checkout.
-  const totalAmount = courses.reduce((sum, c) => sum + c.price, 0);
+  //
+  // resolveTestPaymentAmount returns the real total unless the caller proved
+  // knowledge of PAYMENT_TEST_CODE, and it is applied HERE rather than anywhere
+  // downstream on purpose: quoting is the one place an amount is allowed to be
+  // decided, so a test purchase is verified against its own frozen amount by the
+  // exact same code path as a real one. Nothing below this line knows a test
+  // amount is possible.
+  const fullPrice = courses.reduce((sum, c) => sum + c.price, 0);
+  const totalAmount = resolveTestPaymentAmount(fullPrice, testCode);
 
   // Create-or-retrieve an unpaid purchase by (userId, coursesIds).
   let purchase = await prisma.purchase.findFirst({
@@ -104,6 +113,13 @@ export async function createPurchase(
     // Re-quote a retrieved attempt: prices may have moved, and a previously
     // ABORTED/TIMEOUT row must return to PENDING so the return handler is
     // willing to settle it.
+    //
+    // This branch is what makes the test-payment hatch fail safe in BOTH
+    // directions, and it needs no special-casing to do so. A row quoted at the
+    // test amount and then abandoned is re-quoted back to full price the moment
+    // the buyer retries without the code — the cheap quote cannot outlive the
+    // request that earned it. The reverse holds too: supplying the code on a
+    // retry re-quotes an existing full-price row down.
     purchase = await prisma.purchase.update({
       where: { id: purchase.id },
       data: { amount: totalAmount, status: PaymentStatus.PENDING },
@@ -114,10 +130,25 @@ export async function createPurchase(
     return ok({ purchase: toPublicPurchase(purchase) });
   }
 
+  // Open the transaction for the amount FROZEN ON THE ROW, not for the quote
+  // computed above. The two agree — the branches above assign exactly this value —
+  // but they are separate expressions, and the return handler validates
+  // Transbank's committed amount against the ROW via amountsMatch. Sourcing both
+  // sides of that comparison from the same place means no future edit can charge
+  // one amount while verifying another.
+  //
+  // The null check is real rather than a `!`: Purchase.amount is nullable (legacy
+  // rows carry null), and although every path above leaves it set, a quote of
+  // `null` must fail loudly here instead of reaching Transbank as NaN.
+  const frozenAmount = purchase.amount;
+  if (frozenAmount == null) {
+    return fail('No se pudo determinar el monto de la compra', 500);
+  }
+
   const webPayResponse = await createWebpayTransaction(
     purchase.buyOrder!,
     purchase.userId,
-    totalAmount,
+    frozenAmount,
     returnUrlFor(purchase.id),
   );
 

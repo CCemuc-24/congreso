@@ -30,7 +30,9 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
   }, [registrationOpen]);
 
   // The synchronous module choice (pick 1 of 3) lives in week 1; workshops in week 3.
-  const handleSelectModule = (course: Course) => setSelectedModule(course);
+  // Toggles like the workshops do, so both steps answer a click the same way.
+  const handleSelectModule = (course: Course) =>
+    setSelectedModule((prev) => (prev?.id === course.id ? null : course));
 
   const handleToggleWorkshop = (course: Course) => {
     setSelectedWorkshops((prev) => {
@@ -95,6 +97,13 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
   }
 
   const workshopCount = selectedWorkshops.length;
+  const workshopsLeft = WORKSHOPS_REQUIRED - workshopCount;
+  const missing = [
+    selectedModule == null ? 'elige tu módulo sincrónico' : null,
+    workshopsLeft > 0
+      ? `elige ${workshopsLeft} workshop${workshopsLeft > 1 ? 's' : ''} más`
+      : null,
+  ].filter((item): item is string => item != null);
 
   return (
     <div>
@@ -121,6 +130,11 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
       <WeekSection
         title="Paso 1"
         subtitle="Elige tu módulo sincrónico (1 de 3)"
+        hint={
+          selectedModule
+            ? 'Solo puedes llevar uno: si eliges otro, reemplazas el actual.'
+            : 'Solo puedes llevar uno de los tres.'
+        }
         courses={courses}
         handleSelectCourse={handleSelectModule}
         selectedWeek={selectedModule}
@@ -130,9 +144,15 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
       <WeekSection
         title="Paso 2"
         subtitle={`Elige 2 workshops (${workshopCount}/${WORKSHOPS_REQUIRED} elegidos)`}
+        hint={
+          workshopsLeft > 0
+            ? `Te ${workshopsLeft > 1 ? 'faltan' : 'falta'} ${workshopsLeft} por elegir.`
+            : 'Ya completaste los 2. Quita uno si quieres cambiarlo.'
+        }
         courses={courses}
         handleSelectCourse={handleToggleWorkshop}
         selectedIds={selectedWorkshops.map((w) => w.id)}
+        limit={WORKSHOPS_REQUIRED}
         weekNumber={3}
       />
 
@@ -152,6 +172,11 @@ const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOp
           <Check className="h-4 w-4" />
           Confirmar
         </button>
+        {missing.length > 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Para continuar: {missing.join(' y ')}.
+          </p>
+        ) : null}
       </div>
     </div>
   );
