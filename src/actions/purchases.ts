@@ -1,8 +1,8 @@
 'use server';
 
-import type { Purchase } from '@prisma/client';
+import type { Purchase, Course, User } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { createWebpayTransaction, commitWebpayTransaction } from '@/lib/webpay';
+import { createWebpayTransaction } from '@/lib/webpay';
 import { generateBuyOrder } from '@/domain/buyOrder';
 import { type ActionResult, ok, fail } from '@/domain/result';
 import { CourseType } from '@/domain/courseType';
@@ -148,80 +148,36 @@ export async function deletePurchase(id: string, adminSecret: string): Promise<A
   }
 }
 
-export async function confirmPurchase(
-  purchaseId: string,
-  tokenWs: string,
-): Promise<ActionResult<{ purchase: Purchase; transactionStatus: unknown }>> {
-  if (!tokenWs) {
-    return fail('Transbank no devolvió el código de confirmación', 400);
+export async function getPurchaseReceipt(purchaseId: string): Promise<
+  ActionResult<{ purchase: Purchase; courses: Course[]; user: User | null }>
+> {
+  const parsed = resendConfirmationSchema.safeParse({ purchaseId });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return fail(issue.message, 400, issue.path[0]?.toString());
   }
 
-  const purchase = await prisma.purchase.findUnique({ where: { id: purchaseId } });
-  if (!purchase) {
-    return fail('La compra no fue encontrada', 404);
-  }
-
-  // Idempotent BEFORE committing — a double-submit on an already-paid purchase
-  // short-circuits to ok() without re-committing the Webpay transaction or re-running
-  // any side effects.
-  if (purchase.isPaid) {
-    return ok({ purchase, transactionStatus: { status: 'AUTHORIZED' } });
-  }
-
-  const transactionStatus = await commitWebpayTransaction(tokenWs);
-
-  if (transactionStatus.status === 'ERROR') {
-    return fail(String(transactionStatus.error ?? 'Error en la transacción'), 402);
-  }
-
-  if (transactionStatus.status !== 'AUTHORIZED') {
-    return fail('Transacción no autorizada', 400);
-  }
+  const purchase = await prisma.purchase.findUnique({ where: { id: parsed.data.purchaseId } });
+  if (!purchase) return fail('La compra no fue encontrada', 404);
 
   try {
-    // Single atomic transaction (mark paid -> enroll -> decrement capacity).
-    const updated = await prisma.$transaction(async (tx) => {
-      const marked = await tx.purchase.update({ where: { id: purchase.id }, data: { isPaid: true } });
-
-      // Enroll in the purchased courses PLUS every core course.
-      const coreCourses = await tx.course.findMany({ where: { type: CourseType.core } });
-      const coreIds = coreCourses.map((c) => c.id);
-      const purchasedIds = new Set(purchase.coursesIds);
-      // Purchased courses first so the oversell guard runs on them before core courses.
-      const allCourseIds = Array.from(new Set([...purchase.coursesIds, ...coreIds]));
-
-      for (const courseId of allCourseIds) {
-        const existing = await tx.enrollment.findUnique({
-          where: { UserCourseUnique: { userId: purchase.userId, courseId } },
-        });
-        if (existing) continue;
-
-        await tx.enrollment.create({
-          data: { userId: purchase.userId, courseId, purchaseId: purchase.id },
-        });
-
-        // Conditional decrement closes the oversell window. The capacity guard
-        // (capacity > 0) applies to BOTH, but only PURCHASED courses roll back the
-        // transaction when full. CORE courses are auto-enrolled: decrement only if
-        // capacity remains, and NEVER throw (a full core course must not block confirmation).
-        const dec = await tx.course.updateMany({
-          where: { id: courseId, capacity: { gt: 0 } },
-          data: { capacity: { decrement: 1 } },
-        });
-        if (dec.count === 0 && purchasedIds.has(courseId)) {
-          throw new Error('One or more courses are full');
-        }
-      }
-
-      return marked;
+    // One round trip instead of the page's old per-course loop. The buyer is
+    // enrolled in the purchased courses PLUS every core course.
+    const coreCourses = await prisma.course.findMany({ where: { type: CourseType.core } });
+    const purchasedCourses = await prisma.course.findMany({
+      where: { id: { in: purchase.coursesIds } },
+    });
+    const seen = new Set<string>();
+    const courses = [...coreCourses, ...purchasedCourses].filter((c) => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
     });
 
-    return ok({ purchase: updated, transactionStatus });
+    const user = await prisma.user.findUnique({ where: { id: purchase.userId } });
+    return ok({ purchase, courses, user });
   } catch (error) {
-    // Distinguish the oversell business error (400) from unexpected/infra failures (500).
-    const msg = error instanceof Error ? error.message : 'Transaction failed';
-    const status = msg === 'One or more courses are full' ? 400 : 500;
-    return fail(msg, status);
+    return fail((error as Error).message, 500);
   }
 }
 

@@ -1,28 +1,19 @@
 'use client';
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { CheckCircle2 } from 'lucide-react';
 import Header from '@/components/header';
 import BuyInfo from '@/components/buyInfo';
 import { useConfirmation } from '@/components/inscriptions/useConfirmation';
 
 const ConfirmationContent: React.FC = () => {
-  const router = useRouter();
   const searchParams = useSearchParams();
-
-  const tokenWs = searchParams.get('token_ws');
   const purchaseId = searchParams.get('purchaseId');
-  const tbkToken = searchParams.get('TBK_TOKEN');
-  const tbkOrden = searchParams.get('TBK_ORDEN_COMPRA');
-  const tbkSesion = searchParams.get('TBK_ID_SESION');
-  const aborted = Boolean((tbkToken && tbkOrden) || tbkSesion);
 
-  const { confirmed, courses, user, errorRedirect, resendEmail } = useConfirmation({ tokenWs, purchaseId, aborted });
-
-  useEffect(() => {
-    if (errorRedirect) router.push(errorRedirect);
-  }, [errorRedirect, router]);
+  // No token_ws, no TBK_* handling: /api/webpay/return already committed the
+  // payment and redirected failures straight to /error.
+  const { confirmed, courses, user, resendEmail } = useConfirmation({ purchaseId });
 
   const removeLocalStorage = () => localStorage.removeItem('user_id');
 
