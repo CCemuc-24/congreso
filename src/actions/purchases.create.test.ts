@@ -131,19 +131,22 @@ describe('createPurchase', () => {
   });
 
   it('returns only the purchase (no webPayResponse) when it is already paid', async () => {
-    // isPaid: true can never actually come back from findFirst (it filters on
-    // isPaid: false), so status !== PENDING here still routes through the
-    // re-quote branch before the (unreachable in production) isPaid check.
+    // amount/status already match totalAmount/PENDING so the re-quote branch
+    // does not fire — this test isolates the isPaid short-circuit alone. (The
+    // re-quote branch's own payload is covered by the dedicated re-quote
+    // tests below.) isPaid: true can never actually come back from findFirst
+    // in production (it filters on isPaid: false); that part of the fixture
+    // remains synthetic, same as before.
     prismaMock.course.findMany.mockResolvedValue([{ id: C1, price: 1000, capacity: 10 }]);
     const existing = {
       id: 'pur-paid', userId: USER, buyOrder: 'OLD', isPaid: true, coursesIds: [C1],
-      amount: 1000, status: 'PAID',
+      amount: 1000, status: 'PENDING',
     };
     prismaMock.purchase.findFirst.mockResolvedValue(existing);
-    prismaMock.purchase.update.mockResolvedValue(existing);
 
     const res = await createPurchase({ userId: USER, coursesIds: [C1] });
 
+    expect(prismaMock.purchase.update).not.toHaveBeenCalled();
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.data.purchase).toEqual(existing);
@@ -201,5 +204,52 @@ describe('createPurchase', () => {
       data: { amount: 4000, status: 'PENDING' },
     });
     expect(mockCreateWebpay).toHaveBeenCalledWith('OLDORDER', USER, 4000, expect.any(String));
+  });
+
+  it('re-quotes a legacy row with amount: null even though status is already PENDING', async () => {
+    // Every row created before Task 1's migration looks exactly like this:
+    // amount is null (the column didn't exist yet) and status defaults to
+    // PENDING. Only the amount operand of the re-quote OR-condition fires.
+    prismaMock.course.findMany.mockResolvedValue([{ id: C1, price: 1000, capacity: 10 }]);
+    prismaMock.purchase.findFirst.mockResolvedValue({
+      id: 'pur-legacy', userId: USER, buyOrder: 'LEGACYORDER', isPaid: false,
+      coursesIds: [C1], amount: null, status: 'PENDING',
+    });
+    prismaMock.purchase.update.mockResolvedValue({
+      id: 'pur-legacy', userId: USER, buyOrder: 'LEGACYORDER', isPaid: false,
+      coursesIds: [C1], amount: 1000, status: 'PENDING',
+    });
+    mockCreateWebpay.mockResolvedValue({ token: 'tok-legacy', url: 'https://webpay/redirect' });
+
+    await createPurchase({ userId: USER, coursesIds: [C1] });
+
+    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
+      where: { id: 'pur-legacy' },
+      data: { amount: 1000, status: 'PENDING' },
+    });
+    expect(mockCreateWebpay).toHaveBeenCalledWith('LEGACYORDER', USER, 1000, expect.any(String));
+  });
+
+  it('re-quotes an aborted purchase whose amount was already correct', async () => {
+    // Mirror of the legacy case: amount already matches totalAmount, so only
+    // the status operand of the re-quote OR-condition fires.
+    prismaMock.course.findMany.mockResolvedValue([{ id: C1, price: 1000, capacity: 10 }]);
+    prismaMock.purchase.findFirst.mockResolvedValue({
+      id: 'pur-aborted', userId: USER, buyOrder: 'ABORTEDORDER', isPaid: false,
+      coursesIds: [C1], amount: 1000, status: 'ABORTED',
+    });
+    prismaMock.purchase.update.mockResolvedValue({
+      id: 'pur-aborted', userId: USER, buyOrder: 'ABORTEDORDER', isPaid: false,
+      coursesIds: [C1], amount: 1000, status: 'PENDING',
+    });
+    mockCreateWebpay.mockResolvedValue({ token: 'tok-aborted', url: 'https://webpay/redirect' });
+
+    await createPurchase({ userId: USER, coursesIds: [C1] });
+
+    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
+      where: { id: 'pur-aborted' },
+      data: { amount: 1000, status: 'PENDING' },
+    });
+    expect(mockCreateWebpay).toHaveBeenCalledWith('ABORTEDORDER', USER, 1000, expect.any(String));
   });
 });
