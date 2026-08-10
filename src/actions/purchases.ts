@@ -162,11 +162,15 @@ export async function getPurchaseReceipt(purchaseId: string): Promise<
 
   try {
     // One round trip instead of the page's old per-course loop. The buyer is
-    // enrolled in the purchased courses PLUS every core course.
-    const coreCourses = await prisma.course.findMany({ where: { type: CourseType.core } });
-    const purchasedCourses = await prisma.course.findMany({
-      where: { id: { in: purchase.coursesIds } },
-    });
+    // enrolled in the purchased courses PLUS every core course. The three
+    // queries are independent of each other (only the purchase lookup above
+    // gates them), so they run in parallel rather than as three sequential
+    // round trips on a page the buyer is actively waiting on.
+    const [coreCourses, purchasedCourses, user] = await Promise.all([
+      prisma.course.findMany({ where: { type: CourseType.core } }),
+      prisma.course.findMany({ where: { id: { in: purchase.coursesIds } } }),
+      prisma.user.findUnique({ where: { id: purchase.userId } }),
+    ]);
     const seen = new Set<string>();
     const courses = [...coreCourses, ...purchasedCourses].filter((c) => {
       if (seen.has(c.id)) return false;
@@ -174,7 +178,6 @@ export async function getPurchaseReceipt(purchaseId: string): Promise<
       return true;
     });
 
-    const user = await prisma.user.findUnique({ where: { id: purchase.userId } });
     return ok({ purchase, courses, user });
   } catch (error) {
     return fail((error as Error).message, 500);

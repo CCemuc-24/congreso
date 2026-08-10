@@ -10,9 +10,12 @@ export const purchaseCreateSchema = z.object({
 });
 
 // The recipient is resolved server-side from the purchase owner, so the only
-// input is which purchase to re-send.
+// input is which purchase to re-send. Also gates getPurchaseReceipt's input —
+// both callers take only a purchaseId. Custom message: this surfaces as the
+// 400 error text on a Spanish-language UI, and zod's default uuid message is
+// English.
 export const resendConfirmationSchema = z.object({
-  purchaseId: z.string().uuid(),
+  purchaseId: z.string().uuid('El identificador de la compra no es válido'),
 });
 
 // Fix 9: updatePurchase input validation (replaces casting to Prisma.PurchaseUpdateInput).

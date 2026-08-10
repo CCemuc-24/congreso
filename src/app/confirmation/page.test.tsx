@@ -29,7 +29,7 @@ describe('OrderConfirmation page', () => {
   it('shows order number when confirmed and renders BuyInfo, driven only by ?purchaseId', () => {
     const resendEmail = vi.fn().mockResolvedValue(undefined);
     useConfirmation.mockReturnValue({
-      confirmed: true, courses: [], user: null, isMailSent: true, resendEmail,
+      status: 'confirmed', courses: [], user: null, isMailSent: true, resendEmail,
     });
     render(<OrderConfirmation />);
     expect(screen.getByText('HEADER')).toBeTruthy();
@@ -43,18 +43,39 @@ describe('OrderConfirmation page', () => {
     expect(resendConfirmation).not.toHaveBeenCalled();
   });
 
-  it('shows the confirming message while not confirmed', () => {
+  it('shows the confirming message while loading', () => {
     useConfirmation.mockReturnValue({
-      confirmed: false, courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
+      status: 'loading', courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
     });
     render(<OrderConfirmation />);
     expect(screen.getByText('Confirmando tu compra...')).toBeTruthy();
   });
 
+  it('shows a not-found message instead of spinning forever when the receipt fails to load', () => {
+    useConfirmation.mockReturnValue({
+      status: 'not_found', courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
+    });
+    render(<OrderConfirmation />);
+    expect(screen.getByText(/No encontramos esta compra/)).toBeTruthy();
+    // Distinct from both the loading and the confirmed copy.
+    expect(screen.queryByText('Confirmando tu compra...')).toBeNull();
+    expect(screen.queryByText(/Tu número de orden es/)).toBeNull();
+  });
+
+  it('shows a pending message — distinct from not-found — for a purchase that exists but is not settled', () => {
+    useConfirmation.mockReturnValue({
+      status: 'pending', courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
+    });
+    render(<OrderConfirmation />);
+    expect(screen.getByText(/aún no ha sido confirmada/)).toBeTruthy();
+    expect(screen.queryByText(/No encontramos esta compra/)).toBeNull();
+    expect(screen.queryByText('Confirmando tu compra...')).toBeNull();
+  });
+
   it('"Reenviar correo" button calls resendEmail', () => {
     const resendEmail = vi.fn().mockResolvedValue(undefined);
     useConfirmation.mockReturnValue({
-      confirmed: true, courses: [], user: null, isMailSent: true, resendEmail,
+      status: 'confirmed', courses: [], user: null, isMailSent: true, resendEmail,
     });
     render(<OrderConfirmation />);
     fireEvent.click(screen.getByText('Reenviar correo'));

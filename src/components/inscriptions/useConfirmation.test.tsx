@@ -7,7 +7,6 @@ vi.mock('@/actions/purchases', () => ({
   resendConfirmation: vi.fn(),
 }));
 
-import * as purchasesActions from '@/actions/purchases';
 import { getPurchaseReceipt, resendConfirmation } from '@/actions/purchases';
 import { useConfirmation } from './useConfirmation';
 
@@ -32,17 +31,26 @@ describe('useConfirmation', () => {
     const { result, rerender } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
     rerender(); // simulate the StrictMode double-invocation the ranRef guard defends against
 
-    await waitFor(() => expect(result.current.confirmed).toBe(true));
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
 
     expect(getPurchaseReceipt).toHaveBeenCalledTimes(1);
     expect(getPurchaseReceipt).toHaveBeenCalledWith('p1');
   });
 
-  it('sets confirmed and isMailSent from a PAID receipt, and loads courses + user in one call', async () => {
+  it('starts in the loading state before the receipt resolves', () => {
+    // A promise that never resolves: proves the initial synchronous state
+    // without leaving a dangling async state update to fire after the test
+    // ends (which would otherwise trip an act(...) warning in a later test).
+    vi.mocked(getPurchaseReceipt).mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+    expect(result.current.status).toBe('loading');
+  });
+
+  it('sets status to confirmed and isMailSent from a PAID receipt, and loads courses + user in one call', async () => {
     mockReceipt();
     const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
 
-    await waitFor(() => expect(result.current.confirmed).toBe(true));
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
     expect(result.current.isMailSent).toBe(true);
     // Only getPurchaseReceipt was invoked to load — no per-course fetch of any kind.
     expect(getPurchaseReceipt).toHaveBeenCalledTimes(1);
@@ -51,18 +59,31 @@ describe('useConfirmation', () => {
     expect(result.current.user?.email).toBe('a@b.cl');
   });
 
-  it('leaves confirmed and isMailSent false for a non-PAID status', async () => {
+  it('sets status to pending (not confirmed) for a purchase that exists but has not settled', async () => {
     mockReceipt({ purchase: { ...purchase, status: 'PENDING' } });
     const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
 
     await waitFor(() => expect(getPurchaseReceipt).toHaveBeenCalledTimes(1));
-    expect(result.current.confirmed).toBe(false);
+    await waitFor(() => expect(result.current.status).toBe('pending'));
     expect(result.current.isMailSent).toBe(false);
+    // The receipt still loaded — courses/user are populated even though the
+    // purchase hasn't settled. This is the state a stale-but-real link lands on.
+    expect(result.current.courses.length).toBeGreaterThan(0);
   });
 
-  it('makes no action calls at all when purchaseId is null', async () => {
+  it('sets status to not_found — distinct from pending — when the receipt fails to load', async () => {
+    vi.mocked(getPurchaseReceipt).mockResolvedValue(fail('La compra no fue encontrada', 404) as any);
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+    await waitFor(() => expect(result.current.status).toBe('not_found'));
+    expect(result.current.isMailSent).toBe(false);
+    expect(result.current.courses).toEqual([]);
+    expect(result.current.user).toBeNull();
+  });
+
+  it('makes no action calls at all when purchaseId is null, and stays in loading', () => {
     const { result } = renderHook(() => useConfirmation({ purchaseId: null }));
-    expect(result.current.confirmed).toBe(false);
+    expect(result.current.status).toBe('loading');
     expect(getPurchaseReceipt).not.toHaveBeenCalled();
     expect(resendConfirmation).not.toHaveBeenCalled();
   });
@@ -96,11 +117,5 @@ describe('useConfirmation', () => {
     });
     expect(resendConfirmation).toHaveBeenCalledWith('p1');
     expect(result.current.isMailSent).toBe(false);
-  });
-
-  it('needs no confirmPurchase export — no commit-shaped action is reachable from this hook', () => {
-    // The mock at the top of this file only supplies getPurchaseReceipt and
-    // resendConfirmation; the hook works fully without a confirmPurchase export.
-    expect('confirmPurchase' in purchasesActions).toBe(false);
   });
 });

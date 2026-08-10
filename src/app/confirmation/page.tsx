@@ -13,21 +13,32 @@ const ConfirmationContent: React.FC = () => {
 
   // No token_ws, no TBK_* handling: /api/webpay/return already committed the
   // payment and redirected failures straight to /error.
-  const { confirmed, courses, user, resendEmail } = useConfirmation({ purchaseId });
+  const { status, courses, user, resendEmail } = useConfirmation({ purchaseId });
 
   const removeLocalStorage = () => localStorage.removeItem('user_id');
 
   return (
     <div className="mx-auto max-w-2xl px-6">
       <div className="mb-2 flex items-center gap-3">
-        {confirmed && <CheckCircle2 className="h-7 w-7 text-primary" />}
+        {status === 'confirmed' && <CheckCircle2 className="h-7 w-7 text-primary" />}
         <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground">Confirmación de Orden</h2>
       </div>
-      {confirmed ? (
+      {status === 'confirmed' && (
         <p className="mb-8 text-muted-foreground">
           Tu número de orden es <span className="font-mono font-medium text-foreground">{purchaseId}</span>. Recuerda que te llegará una copia al correo electrónico que hayas indicado en el formulario.
         </p>
-      ) : (
+      )}
+      {status === 'not_found' && (
+        <p className="mb-8 text-muted-foreground">
+          No encontramos esta compra. Revisa el enlace o contáctanos si crees que es un error.
+        </p>
+      )}
+      {status === 'pending' && (
+        <p className="mb-8 text-muted-foreground">
+          Tu compra aún no ha sido confirmada. Si ya realizaste el pago, puede tardar unos minutos en reflejarse aquí.
+        </p>
+      )}
+      {status === 'loading' && (
         <p className="mb-8 text-muted-foreground">Confirmando tu compra...</p>
       )}
       <BuyInfo courses={courses} user={user} />

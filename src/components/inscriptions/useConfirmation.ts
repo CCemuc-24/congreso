@@ -7,8 +7,17 @@ interface UseConfirmationParams {
   purchaseId: string | null;
 }
 
+// Four distinguishable states, not just confirmed/not: the receipt call can
+// still be in flight ('loading'), can come back for a purchase that exists
+// but hasn't settled yet ('pending' — a stale link, or a purchase reversed
+// after settlement), or can fail to resolve to a purchase at all
+// ('not_found' — bad id, deleted row). Collapsing 'pending' and 'not_found'
+// into "not confirmed" was the bug: both rendered "Confirmando tu compra..."
+// forever, with no way for the reader to tell a slow page from a dead link.
+export type ReceiptStatus = 'loading' | 'confirmed' | 'pending' | 'not_found';
+
 interface UseConfirmationResult {
-  confirmed: boolean;
+  status: ReceiptStatus;
   courses: Course[];
   user: User | null;
   isMailSent: boolean;
@@ -21,7 +30,7 @@ interface UseConfirmationResult {
  * result, and never sees a Webpay token.
  */
 export function useConfirmation({ purchaseId }: UseConfirmationParams): UseConfirmationResult {
-  const [confirmed, setConfirmed] = useState(false);
+  const [status, setStatus] = useState<ReceiptStatus>('loading');
   const [courses, setCourses] = useState<Course[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [isMailSent, setIsMailSent] = useState(false);
@@ -33,13 +42,17 @@ export function useConfirmation({ purchaseId }: UseConfirmationParams): UseConfi
 
     void (async () => {
       const res = await getPurchaseReceipt(purchaseId);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setStatus('not_found');
+        return;
+      }
       setCourses(res.data.courses);
       setUser(res.data.user);
       // The receipt email is sent server-side on commit; treat a settled purchase
       // as already mailed.
-      setConfirmed(res.data.purchase.status === 'PAID');
-      setIsMailSent(res.data.purchase.status === 'PAID');
+      const paid = res.data.purchase.status === 'PAID';
+      setStatus(paid ? 'confirmed' : 'pending');
+      setIsMailSent(paid);
     })();
   }, [purchaseId]);
 
@@ -49,5 +62,5 @@ export function useConfirmation({ purchaseId }: UseConfirmationParams): UseConfi
     if (res.ok) setIsMailSent(true);
   }, [purchaseId]);
 
-  return { confirmed, courses, user, isMailSent, resendEmail };
+  return { status, courses, user, isMailSent, resendEmail };
 }
