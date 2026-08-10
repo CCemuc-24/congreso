@@ -8,15 +8,13 @@ import { type ActionResult, ok, fail } from '@/domain/result';
 import { CourseType } from '@/domain/courseType';
 import { PaymentStatus } from '@/domain/paymentStatus';
 import { assertAdmin } from '@/lib/auth';
-import { sendMail } from '@/lib/mailer';
-import { buildConfirmationEmailHtml } from '@/lib/confirmationEmail';
+import { sendPurchaseConfirmation } from '@/lib/purchaseEmail';
 import {
   purchaseCreateSchema,
   type PurchaseCreateInput,
   updatePurchaseSchema,
   type UpdatePurchaseInput,
-  sendConfirmationSchema,
-  type SendConfirmationInput,
+  resendConfirmationSchema,
 } from '@/schemas/purchase';
 
 function returnUrlFor(purchaseId: string): string {
@@ -227,32 +225,18 @@ export async function confirmPurchase(
   }
 }
 
-export async function sendConfirmation(input: SendConfirmationInput): Promise<ActionResult<null>> {
-  const parsed = sendConfirmationSchema.safeParse(input);
+export async function resendConfirmation(purchaseId: string): Promise<ActionResult<null>> {
+  const parsed = resendConfirmationSchema.safeParse({ purchaseId });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     return fail(issue.message, 400, issue.path[0]?.toString());
   }
-  const { purchaseId, email } = parsed.data;
-
-  const purchase = await prisma.purchase.findUnique({ where: { id: purchaseId } });
-  if (!purchase) return fail('Purchase not found', 404);
 
   try {
-    // Load the purchased courses PLUS every core course (these are the courses the buyer is enrolled in).
-    const coreCourses = await prisma.course.findMany({ where: { type: CourseType.core } });
-    const purchasedCourses = await prisma.course.findMany({ where: { id: { in: purchase.coursesIds } } });
-    const seen = new Set<string>();
-    const courses = [...coreCourses, ...purchasedCourses].filter((c) => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
-    });
-
-    const html = buildConfirmationEmailHtml({ id: purchaseId, courses });
-    await sendMail(email, 'Confirmación de compra', html);
+    await sendPurchaseConfirmation(parsed.data.purchaseId);
     return ok(null);
   } catch (error) {
-    return fail((error as Error).message, 500);
+    const message = error instanceof Error ? error.message : 'Send failed';
+    return fail(message, message === 'Purchase not found' ? 404 : 500);
   }
 }
