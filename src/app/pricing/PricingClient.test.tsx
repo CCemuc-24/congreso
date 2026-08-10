@@ -15,9 +15,9 @@ import PricingClient from './PricingClient';
 // 2026 bundle catalog: 1 general (core) + 3 sync modules (elective, week 1) + 3 workshops (week 3).
 const courses = [
   { id: 'g1', title: 'General', module: 1, type: 'core', price: 0, capacity: 1000, features: {}, week: 0, topics: [] },
-  { id: 'm1', title: 'Módulo A', module: 2, type: 'elective', price: 25900, capacity: 1000, features: {}, week: 1, topics: [] },
-  { id: 'm2', title: 'Módulo B', module: 4, type: 'elective', price: 25900, capacity: 1000, features: {}, week: 1, topics: [] },
-  { id: 'm3', title: 'Módulo C', module: 5, type: 'elective', price: 25900, capacity: 1000, features: {}, week: 1, topics: [] },
+  { id: 'm1', title: 'Módulo A', module: 2, type: 'elective', price: 23000, capacity: 1000, features: {}, week: 1, topics: [] },
+  { id: 'm2', title: 'Módulo B', module: 4, type: 'elective', price: 23000, capacity: 1000, features: {}, week: 1, topics: [] },
+  { id: 'm3', title: 'Módulo C', module: 5, type: 'elective', price: 23000, capacity: 1000, features: {}, week: 1, topics: [] },
   { id: 'w1', title: 'Workshop A', module: 1, type: 'workshop', price: 0, capacity: 20, features: {}, week: 3, topics: [] },
   { id: 'w2', title: 'Workshop B', module: 2, type: 'workshop', price: 0, capacity: 20, features: {}, week: 3, topics: [] },
   { id: 'w3', title: 'Workshop C', module: 3, type: 'workshop', price: 0, capacity: 20, features: {}, week: 3, topics: [] },

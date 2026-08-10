@@ -12,7 +12,7 @@ const user = {
 // 2026 bundle: general (core) + chosen module (elective, carries the ticket price) + 2 workshops.
 const courses = [
   { id: 'g0', title: 'Módulo General', module: 1, type: 'core', price: 0, capacity: 1000, features: null, week: 0, topics: [], createdAt: new Date(), updatedAt: new Date() },
-  { id: 'm1', title: 'Módulo Ginecología', module: 4, type: 'elective', price: 25900, capacity: 1000, features: null, week: 1, topics: [], createdAt: new Date(), updatedAt: new Date() },
+  { id: 'm1', title: 'Módulo Ginecología', module: 4, type: 'elective', price: 23000, capacity: 1000, features: null, week: 1, topics: [], createdAt: new Date(), updatedAt: new Date() },
   { id: 'w1', title: 'Workshop Suturas', module: 6, type: 'workshop', price: 0, capacity: 20, features: null, week: 3, topics: [], createdAt: new Date(), updatedAt: new Date() },
   { id: 'w2', title: 'Workshop RCP avanzado', module: 7, type: 'workshop', price: 0, capacity: 20, features: null, week: 3, topics: [], createdAt: new Date(), updatedAt: new Date() },
 ] as unknown as Course[];
@@ -34,7 +34,7 @@ describe('BuyInfo', () => {
     expect(screen.getByText('Módulo Ginecología')).toBeTruthy();
     expect(screen.getByText('Workshop Suturas')).toBeTruthy();
     expect(screen.getByText('Workshop RCP avanzado')).toBeTruthy();
-    expect(screen.getByText('$25900')).toBeTruthy(); // ticket price rides on the module
+    expect(screen.getByText('$23000')).toBeTruthy(); // ticket price rides on the module
     expect(screen.getByText('Ada Lovelace')).toBeTruthy();
     expect(screen.getByText('11.111.111-1')).toBeTruthy();
     expect(screen.getByText('ada@example.com')).toBeTruthy();

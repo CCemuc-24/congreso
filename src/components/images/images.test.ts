@@ -27,6 +27,6 @@ describe('getCourseImage', () => {
   it('falls back to the general image for an unmatched title', () => {
     const image = getCourseImage('Módulo General: Cirugía en pacientes complejos');
     const src = typeof image === 'string' ? image : image.src;
-    expect(src).toContain('general-cirugia-innovacion');
+    expect(src).toContain('general-cirugia-pacientes-complejos');
   });
 });
