@@ -96,9 +96,13 @@ describe('confirmWebpayReturn — the four Transbank return flows', () => {
       TBK_ORDEN_COMPRA: BUY_ORDER, TBK_ID_SESION: 'sess',
     });
     expect(res.outcome).toBe('error');
-    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
-      where: { id: 'p1' }, data: { status: PaymentStatus.TIMEOUT },
+    // updateMany, not update: the PENDING guard is repeated in the where clause so a
+    // concurrent duplicate return that settles the row between the read and the write
+    // cannot have a failure status stamped over its PAID state.
+    expect(prismaMock.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: PaymentStatus.PENDING }, data: { status: PaymentStatus.TIMEOUT },
     });
+    expect(prismaMock.purchase.update).not.toHaveBeenCalled();
     expect(mockCommit).not.toHaveBeenCalled();
   });
 
@@ -108,9 +112,10 @@ describe('confirmWebpayReturn — the four Transbank return flows', () => {
       TBK_TOKEN: 'tbk-1', TBK_ORDEN_COMPRA: BUY_ORDER, TBK_ID_SESION: 'sess',
     });
     expect(res.outcome).toBe('error');
-    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
-      where: { id: 'p1' }, data: { status: PaymentStatus.ABORTED },
+    expect(prismaMock.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: PaymentStatus.PENDING }, data: { status: PaymentStatus.ABORTED },
     });
+    expect(prismaMock.purchase.update).not.toHaveBeenCalled();
     expect(mockCommit).not.toHaveBeenCalled();
   });
 
@@ -120,9 +125,10 @@ describe('confirmWebpayReturn — the four Transbank return flows', () => {
       token_ws: 'tok', TBK_TOKEN: 'tbk-1', TBK_ORDEN_COMPRA: BUY_ORDER,
     });
     expect(res.outcome).toBe('error');
-    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
-      where: { id: 'p1' }, data: { status: PaymentStatus.ERROR },
+    expect(prismaMock.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: PaymentStatus.PENDING }, data: { status: PaymentStatus.ERROR },
     });
+    expect(prismaMock.purchase.update).not.toHaveBeenCalled();
     // Transbank mandates not committing this case.
     expect(mockCommit).not.toHaveBeenCalled();
   });
@@ -130,7 +136,10 @@ describe('confirmWebpayReturn — the four Transbank return flows', () => {
   it('never downgrades an already-PAID purchase on a replayed failure return', async () => {
     prismaMock.purchase.findUnique.mockResolvedValue({ ...PENDING, status: PaymentStatus.PAID, isPaid: true });
     await confirmWebpayReturn({ TBK_TOKEN: 'tbk-1', TBK_ORDEN_COMPRA: BUY_ORDER });
+    // No write is even attempted: the read-side PENDING check short-circuits, and the
+    // where clause would refuse the row anyway.
     expect(prismaMock.purchase.update).not.toHaveBeenCalled();
+    expect(prismaMock.purchase.updateMany).not.toHaveBeenCalled();
   });
 
   it('does no lookup or write when there is no token and no buy order', async () => {
@@ -138,6 +147,7 @@ describe('confirmWebpayReturn — the four Transbank return flows', () => {
     expect(res.outcome).toBe('error');
     expect(prismaMock.purchase.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.purchase.update).not.toHaveBeenCalled();
+    expect(prismaMock.purchase.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -307,6 +317,44 @@ describe('confirmWebpayReturn — settlement', () => {
       },
     });
     if (res.outcome === 'error') expect(res.message).toContain('reembolso');
+  });
+
+  it('never forwards a raw exception message to the buyer, but does log it', async () => {
+    // The message becomes /error?message=… and is rendered to the payer. A Prisma
+    // connection string, a constraint name, or any other internal detail must not
+    // reach that page — and the payer must not be shown English internals on the one
+    // page they read after a charge they cannot see the outcome of.
+    prismaMock.purchase.findUnique.mockResolvedValue(PENDING);
+    mockCommit.mockResolvedValue(AUTHORIZED);
+    const dbError = new Error("Can't reach database server at ep-secret-host.neon.tech:5432");
+    const tx = makeTx({ purchase: { update: vi.fn().mockRejectedValue(dbError) } });
+    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
+
+    const res = await confirmWebpayReturn({ token_ws: 'tok' });
+
+    expect(res.outcome).toBe('error');
+    if (res.outcome === 'error') {
+      expect(res.message).toBe(
+        'Tu pago fue aprobado pero no pudimos completar tu inscripción. Contáctanos para resolverlo.',
+      );
+      expect(res.message).not.toContain('neon.tech');
+      expect(res.message).not.toContain('database');
+    }
+    // Fixed copy for the buyer, full detail for the operator.
+    expect(consoleError).toHaveBeenCalledWith(
+      'webpay settlement failed after an approved commit',
+      expect.objectContaining({ purchaseId: 'p1', buyOrder: BUY_ORDER, oversold: false, error: dbError }),
+    );
+    // The charge is still recorded, so the money stays visible to an admin.
+    expect(prismaMock.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: { not: PaymentStatus.PAID } },
+      data: {
+        status: PaymentStatus.ERROR,
+        token: 'tok',
+        authorizationCode: '123456',
+        paymentTypeCode: 'VN',
+      },
+    });
   });
 
   it('does not block settlement when only a CORE course is full', async () => {
@@ -516,5 +564,19 @@ describe('amountsMatch', () => {
     expect(amountsMatch(NaN, 25900)).toBe(false);
     expect(amountsMatch(25900, NaN)).toBe(false);
     expect(amountsMatch(NaN, NaN)).toBe(false);
+  });
+
+  it('fails closed on a non-integer committed amount', () => {
+    // Amounts are integer CLP by contract. A fractional committed amount means
+    // Transbank sent something the contract says it cannot, so it must not be
+    // rounded into a match — 25900.4 is not a payment of 25900.
+    expect(amountsMatch(25900.4, 25900)).toBe(false);
+    expect(amountsMatch(25899.5, 25900)).toBe(false);
+    expect(amountsMatch(25900.000001, 25900)).toBe(false);
+  });
+
+  it('fails closed on a non-finite committed amount', () => {
+    expect(amountsMatch(Infinity, 25900)).toBe(false);
+    expect(amountsMatch(-Infinity, 25900)).toBe(false);
   });
 });

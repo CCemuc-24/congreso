@@ -28,16 +28,34 @@ export type ConfirmOutcome =
 const ABORT_MESSAGE = 'Error en la compra';
 const OVERSOLD_MESSAGE =
   'Tu pago fue aprobado pero uno de los cursos se llenó. Contáctanos para gestionar tu reembolso o cambio de curso.';
+// Every non-oversell settlement failure collapses to this one fixed string. The
+// message travels to the buyer as /error?message=… and is rendered on the page a
+// distressed payer reads, so it must never carry a raw exception: a Prisma
+// connection error or a constraint violation would put English internals — and
+// implementation detail — in front of them. The real error is logged instead.
+const SETTLEMENT_FAILED_MESSAGE =
+  'Tu pago fue aprobado pero no pudimos completar tu inscripción. Contáctanos para resolverlo.';
 
 /** Both conditions are required. Neither alone means the card was charged. */
 export function isApproved(commit: WebpayCommitResponse): boolean {
   return commit.status === 'AUTHORIZED' && commit.response_code === 0;
 }
 
-/** Integer CLP comparison against the amount we froze before redirecting. */
+/**
+ * Integer CLP comparison against the amount we froze before redirecting.
+ *
+ * Strict equality on two integers, not Math.round on either side: amounts are
+ * integer CLP by contract (Course.price and Purchase.amount are Int), so a
+ * non-integer committed amount is not a rounding nuisance — it means Transbank
+ * sent something the contract says it cannot, and rounding it would let 25900.4
+ * settle a 25900 purchase. Number.isInteger also fails closed on NaN and on
+ * Infinity, and the explicit null check keeps the nullable-column case (legacy
+ * rows carry amount: null) unsettleable.
+ */
 export function amountsMatch(committed: number | undefined, expected: number | null): boolean {
   if (committed == null || expected == null) return false;
-  return Math.round(committed) === Math.round(expected);
+  if (!Number.isInteger(committed) || !Number.isInteger(expected)) return false;
+  return committed === expected;
 }
 
 /**
@@ -50,6 +68,14 @@ export function amountsMatch(committed: number | undefined, expected: number | n
  * buyOrder is the only key that links a tokenless callback back to a row, so when it
  * is absent we return null without any lookup and the row simply stays PENDING. The
  * per-case status distinction is therefore a best effort, not a guarantee.
+ *
+ * The lookup stays because the caller needs the row id for the /error redirect, but the
+ * PENDING check is repeated inside the WRITE's where clause rather than trusted from the
+ * read: a concurrent duplicate return could settle the row between the two statements,
+ * and a bare update would then stamp ABORTED/TIMEOUT/ERROR over a PAID purchase, leaving
+ * isPaid: true beside a failure status and breaking that mirror. updateMany applies the
+ * guard atomically. The read-side check is kept as well, so an already-terminal row
+ * issues no write at all.
  */
 async function failPending(
   buyOrder: string | undefined,
@@ -59,7 +85,10 @@ async function failPending(
   const purchase = await prisma.purchase.findUnique({ where: { buyOrder } });
   if (!purchase) return null;
   if (purchase.status === PaymentStatus.PENDING) {
-    await prisma.purchase.update({ where: { id: purchase.id }, data: { status } });
+    await prisma.purchase.updateMany({
+      where: { id: purchase.id, status: PaymentStatus.PENDING },
+      data: { status },
+    });
   }
   return purchase.id;
 }
@@ -93,6 +122,17 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
   // back, and clicks pay again holds two live tokens for one buyOrder. Committing the
   // stale one after the other settled is a second, distinct Transbank transaction —
   // it authorizes, and the card is charged twice.
+  //
+  // That premise was verified empirically against the Transbank INTEGRATION
+  // environment on 2026-08-10, rather than inferred from the SDK source: two
+  // Transaction.create calls with an IDENTICAL buy_order (DUPmsnm5bvv000000000000000)
+  // both succeeded and returned two DIFFERENT tokens —
+  //   attempt 1 -> 01ab6bc4ab579b2d9e288acdd5c06dd12b69bc2db14e06c5c17d5b3e4c47e71f
+  //   attempt 2 -> 01abcfd6893adea91cb85cfa4ab28da11fe71540d6afaac5b1cdfb284f9b6b66
+  // Transbank does NOT reject a duplicate buy_order on create (the SDK only length-
+  // checks before POSTing, and the gateway accepted it). So two live tokens for one
+  // buyOrder is a real state, not a theoretical one, and this guard is load-bearing
+  // rather than belt-and-braces. Not re-verified against production credentials.
   //
   // This is the ONE safe use of the client-supplied purchaseId, and the distinction is
   // the whole point: using it to SKIP a commit can only ever result in not charging a
@@ -267,6 +307,17 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
     const message = error instanceof Error ? error.message : 'Transaction failed';
     const oversold = message === 'One or more courses are full';
 
+    // Keep the full detail where it is useful and safe — the logs. Mirrors what the
+    // /api/webpay/return catch already does for its own failures. Logged for the
+    // oversell case too: the card was charged and the seat was not granted either
+    // way, which is something an operator needs to see.
+    console.error('webpay settlement failed after an approved commit', {
+      purchaseId: purchase.id,
+      buyOrder: purchase.buyOrder,
+      oversold,
+      error,
+    });
+
     // The card WAS charged but we could not seat the student, and the transaction
     // rolled back. Persist the payment facts outside it so the money is visible to
     // an admin instead of vanishing into a PENDING row. Best-effort: if even this
@@ -292,7 +343,8 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
     return {
       outcome: 'error',
       purchaseId: purchase.id,
-      message: oversold ? OVERSOLD_MESSAGE : message,
+      // Never `message`: that is error.message, and it ends up in the buyer's URL.
+      message: oversold ? OVERSOLD_MESSAGE : SETTLEMENT_FAILED_MESSAGE,
     };
   }
 }
