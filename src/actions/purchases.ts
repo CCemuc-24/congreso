@@ -6,6 +6,7 @@ import { createWebpayTransaction, commitWebpayTransaction } from '@/lib/webpay';
 import { generateBuyOrder } from '@/domain/buyOrder';
 import { type ActionResult, ok, fail } from '@/domain/result';
 import { CourseType } from '@/domain/courseType';
+import { PaymentStatus } from '@/domain/paymentStatus';
 import { assertAdmin } from '@/lib/auth';
 import { sendMail } from '@/lib/mailer';
 import { buildConfirmationEmailHtml } from '@/lib/confirmationEmail';
@@ -44,13 +45,32 @@ export async function createPurchase(
     return fail('One or more courses are full', 400);
   }
 
+  // The amount is frozen here, before the redirect, because the return handler
+  // verifies Transbank's committed amount against it. Recomputing at commit time
+  // would reject legitimate payments whenever a price changed mid-checkout.
+  const totalAmount = courses.reduce((sum, c) => sum + c.price, 0);
+
   // Create-or-retrieve an unpaid purchase by (userId, coursesIds).
   let purchase = await prisma.purchase.findFirst({
     where: { userId, coursesIds: { equals: coursesIds }, isPaid: false },
   });
   if (!purchase) {
     purchase = await prisma.purchase.create({
-      data: { userId, coursesIds, buyOrder: generateBuyOrder() },
+      data: {
+        userId,
+        coursesIds,
+        buyOrder: generateBuyOrder(),
+        amount: totalAmount,
+        status: PaymentStatus.PENDING,
+      },
+    });
+  } else if (purchase.amount !== totalAmount || purchase.status !== PaymentStatus.PENDING) {
+    // Re-quote a retrieved attempt: prices may have moved, and a previously
+    // ABORTED/TIMEOUT row must return to PENDING so the return handler is
+    // willing to settle it.
+    purchase = await prisma.purchase.update({
+      where: { id: purchase.id },
+      data: { amount: totalAmount, status: PaymentStatus.PENDING },
     });
   }
 
@@ -58,7 +78,6 @@ export async function createPurchase(
     return ok({ purchase });
   }
 
-  const totalAmount = courses.reduce((sum, c) => sum + c.price, 0);
   const webPayResponse = await createWebpayTransaction(
     purchase.buyOrder!,
     purchase.userId,

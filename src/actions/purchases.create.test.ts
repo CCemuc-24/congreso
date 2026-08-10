@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     course: { findMany: vi.fn() },
-    purchase: { findFirst: vi.fn(), create: vi.fn() },
+    purchase: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
   },
 }));
 
@@ -24,7 +24,11 @@ import { createPurchase } from './purchases';
 
 const prismaMock = prisma as unknown as {
   course: { findMany: ReturnType<typeof vi.fn> };
-  purchase: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+  purchase: {
+    findFirst: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+  };
 };
 const mockCreateWebpay = createWebpayTransaction as unknown as ReturnType<typeof vi.fn>;
 
@@ -78,7 +82,10 @@ describe('createPurchase', () => {
       { id: C2, price: 2000, capacity: 5 },
     ]);
     prismaMock.purchase.findFirst.mockResolvedValue(null);
-    const created = { id: 'pur-1', userId: USER, buyOrder: 'BUYORDER0000000000000000AB', isPaid: false, coursesIds: [C1, C2] };
+    const created = {
+      id: 'pur-1', userId: USER, buyOrder: 'BUYORDER0000000000000000AB',
+      isPaid: false, coursesIds: [C1, C2], amount: 3000, status: 'PENDING',
+    };
     prismaMock.purchase.create.mockResolvedValue(created);
     mockCreateWebpay.mockResolvedValue({ token: 'tok-123', url: 'https://webpay/redirect' });
 
@@ -90,7 +97,13 @@ describe('createPurchase', () => {
       expect(res.data.webPayResponse).toEqual({ token: 'tok-123', url: 'https://webpay/redirect' });
     }
     expect(prismaMock.purchase.create).toHaveBeenCalledWith({
-      data: { userId: USER, coursesIds: [C1, C2], buyOrder: 'BUYORDER0000000000000000AB' },
+      data: {
+        userId: USER,
+        coursesIds: [C1, C2],
+        buyOrder: 'BUYORDER0000000000000000AB',
+        amount: 3000,
+        status: 'PENDING',
+      },
     });
     expect(mockCreateWebpay).toHaveBeenCalledWith(
       'BUYORDER0000000000000000AB',
@@ -102,21 +115,32 @@ describe('createPurchase', () => {
 
   it('retrieves an existing unpaid purchase instead of creating a new one', async () => {
     prismaMock.course.findMany.mockResolvedValue([{ id: C1, price: 1000, capacity: 10 }]);
-    const existing = { id: 'pur-9', userId: USER, buyOrder: 'OLD', isPaid: false, coursesIds: [C1] };
+    const existing = {
+      id: 'pur-9', userId: USER, buyOrder: 'OLD', isPaid: false, coursesIds: [C1],
+      amount: 1000, status: 'PENDING',
+    };
     prismaMock.purchase.findFirst.mockResolvedValue(existing);
     mockCreateWebpay.mockResolvedValue({ token: 'tok-9', url: 'https://webpay/9' });
 
     const res = await createPurchase({ userId: USER, coursesIds: [C1] });
 
     expect(prismaMock.purchase.create).not.toHaveBeenCalled();
+    expect(prismaMock.purchase.update).not.toHaveBeenCalled();
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.purchase).toEqual(existing);
   });
 
   it('returns only the purchase (no webPayResponse) when it is already paid', async () => {
+    // isPaid: true can never actually come back from findFirst (it filters on
+    // isPaid: false), so status !== PENDING here still routes through the
+    // re-quote branch before the (unreachable in production) isPaid check.
     prismaMock.course.findMany.mockResolvedValue([{ id: C1, price: 1000, capacity: 10 }]);
-    const existing = { id: 'pur-paid', userId: USER, buyOrder: 'OLD', isPaid: true, coursesIds: [C1] };
+    const existing = {
+      id: 'pur-paid', userId: USER, buyOrder: 'OLD', isPaid: true, coursesIds: [C1],
+      amount: 1000, status: 'PAID',
+    };
     prismaMock.purchase.findFirst.mockResolvedValue(existing);
+    prismaMock.purchase.update.mockResolvedValue(existing);
 
     const res = await createPurchase({ userId: USER, coursesIds: [C1] });
 
@@ -126,5 +150,56 @@ describe('createPurchase', () => {
       expect(res.data.webPayResponse).toBeUndefined();
     }
     expect(mockCreateWebpay).not.toHaveBeenCalled();
+  });
+
+  it('persists the quoted amount and PENDING status on the new purchase', async () => {
+    prismaMock.course.findMany.mockResolvedValue([
+      { id: C1, price: 1000, capacity: 10 },
+      { id: C2, price: 2000, capacity: 5 },
+    ]);
+    prismaMock.purchase.findFirst.mockResolvedValue(null);
+    prismaMock.purchase.create.mockResolvedValue({
+      id: 'pur-1', userId: USER, buyOrder: 'BUYORDER0000000000000000AB',
+      isPaid: false, coursesIds: [C1, C2], amount: 3000, status: 'PENDING',
+    });
+    mockCreateWebpay.mockResolvedValue({ token: 'tok-123', url: 'https://webpay/redirect' });
+
+    await createPurchase({ userId: USER, coursesIds: [C1, C2] });
+
+    expect(prismaMock.purchase.create).toHaveBeenCalledWith({
+      data: {
+        userId: USER,
+        coursesIds: [C1, C2],
+        buyOrder: 'BUYORDER0000000000000000AB',
+        amount: 3000,
+        status: 'PENDING',
+      },
+    });
+  });
+
+  it('re-quotes a retrieved unpaid purchase when course prices have changed', async () => {
+    // An abandoned attempt quoted 3000; the elective has since been repriced to 4000.
+    prismaMock.course.findMany.mockResolvedValue([
+      { id: C1, price: 4000, capacity: 10 },
+    ]);
+    prismaMock.purchase.findFirst.mockResolvedValue({
+      id: 'pur-old', userId: USER, buyOrder: 'OLDORDER', isPaid: false,
+      coursesIds: [C1], amount: 3000, status: 'ABORTED',
+    });
+    prismaMock.purchase.update.mockResolvedValue({
+      id: 'pur-old', userId: USER, buyOrder: 'OLDORDER', isPaid: false,
+      coursesIds: [C1], amount: 4000, status: 'PENDING',
+    });
+    mockCreateWebpay.mockResolvedValue({ token: 'tok-re', url: 'https://webpay/redirect' });
+
+    await createPurchase({ userId: USER, coursesIds: [C1] });
+
+    // The stored amount MUST match what we send to Transbank, or the return
+    // handler's amount check would reject a legitimate payment.
+    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
+      where: { id: 'pur-old' },
+      data: { amount: 4000, status: 'PENDING' },
+    });
+    expect(mockCreateWebpay).toHaveBeenCalledWith('OLDORDER', USER, 4000, expect.any(String));
   });
 });
