@@ -12,9 +12,20 @@ import { CourseType } from '@/domain/courseType';
 
 const SUBJECT = 'Confirmación de compra';
 
+// Typed so callers can distinguish "no such purchase" from any other failure
+// (mailer down, missing owner email, etc.) without coupling to this message's
+// exact wording — the id-bearing detail here is for logs only, never surfaced
+// to a client.
+export class PurchaseNotFoundError extends Error {
+  constructor(purchaseId: string) {
+    super(`Purchase not found: ${purchaseId}`);
+    this.name = 'PurchaseNotFoundError';
+  }
+}
+
 export async function sendPurchaseConfirmation(purchaseId: string): Promise<void> {
   const purchase = await prisma.purchase.findUnique({ where: { id: purchaseId } });
-  if (!purchase) throw new Error('Purchase not found');
+  if (!purchase) throw new PurchaseNotFoundError(purchaseId);
 
   const user = await prisma.user.findUnique({ where: { id: purchase.userId } });
   if (!user?.email) throw new Error('Purchase owner has no email');

@@ -8,7 +8,7 @@ import { type ActionResult, ok, fail } from '@/domain/result';
 import { CourseType } from '@/domain/courseType';
 import { PaymentStatus } from '@/domain/paymentStatus';
 import { assertAdmin } from '@/lib/auth';
-import { sendPurchaseConfirmation } from '@/lib/purchaseEmail';
+import { sendPurchaseConfirmation, PurchaseNotFoundError } from '@/lib/purchaseEmail';
 import {
   purchaseCreateSchema,
   type PurchaseCreateInput,
@@ -236,7 +236,15 @@ export async function resendConfirmation(purchaseId: string): Promise<ActionResu
     await sendPurchaseConfirmation(parsed.data.purchaseId);
     return ok(null);
   } catch (error) {
+    // Distinguished by type, not by matching this string against whatever
+    // sendPurchaseConfirmation happens to throw today — a typed error can't
+    // silently drift out of sync the way a copy-pasted message could.
+    if (error instanceof PurchaseNotFoundError) {
+      // The typed error's own message embeds the purchase id for logs; never
+      // forward that (or any other internal detail) to the client.
+      return fail('Purchase not found', 404);
+    }
     const message = error instanceof Error ? error.message : 'Send failed';
-    return fail(message, message === 'Purchase not found' ? 404 : 500);
+    return fail(message, 500);
   }
 }

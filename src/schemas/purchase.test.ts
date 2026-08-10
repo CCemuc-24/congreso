@@ -64,4 +64,14 @@ describe('updatePurchaseSchema', () => {
     expect(r.success).toBe(false);
     if (!r.success) expect(r.error.issues[0].path).toEqual(['isPaid']);
   });
+  it('accepts a valid status value', () => {
+    const r = updatePurchaseSchema.safeParse({ status: 'PAID' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.status).toBe('PAID');
+  });
+  it('rejects an invalid status value', () => {
+    const r = updatePurchaseSchema.safeParse({ status: 'NOT_A_STATUS' });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0].path).toEqual(['status']);
+  });
 });
