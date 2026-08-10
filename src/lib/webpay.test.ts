@@ -55,6 +55,20 @@ describe('getWebpayTransaction', () => {
     expect(optionsSpy).toHaveBeenCalledWith('597055555532', 'int-api-key-default', 'INTEGRATION');
   });
 
+  it('uses Integration env and SDK integration defaults when creds are declared-but-empty strings', async () => {
+    // Regression guard for the `??`-vs-`||` trap: unlike an unset var, `.env`
+    // and `vercel env pull` both write a declared-but-blank key as `''`, not
+    // as a missing key. `??` only falls through on null/undefined, so it
+    // would leave commerceCode/apiKey as `''` here and send that straight to
+    // Transbank (a live 401 in the integration environment). `||` must fall
+    // through on `''` too.
+    process.env.WEBPAY_COMMERCE_CODE = '';
+    process.env.WEBPAY_API_KEY = '';
+    const { getWebpayTransaction } = await import('./webpay');
+    getWebpayTransaction();
+    expect(optionsSpy).toHaveBeenCalledWith('597055555532', 'int-api-key-default', 'INTEGRATION');
+  });
+
   it('uses Integration env with provided creds when WEBPAY_ENVIRONMENT=integration and creds set', async () => {
     process.env.WEBPAY_ENVIRONMENT = 'integration';
     process.env.WEBPAY_COMMERCE_CODE = 'int-cc';
