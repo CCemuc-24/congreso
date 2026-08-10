@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { StrictMode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { ok, fail } from '@/domain/result';
 
@@ -26,10 +27,15 @@ function mockReceipt(overrides: Record<string, unknown> = {}) {
 }
 
 describe('useConfirmation', () => {
-  it('loads the receipt in exactly one call, even across a StrictMode double-render', async () => {
+  it('loads the receipt in exactly one call under a real StrictMode double-invocation', async () => {
+    // Rendered inside StrictMode, which in a development React build mounts the
+    // effect, tears it down, and mounts it AGAIN. A plain rerender() with an
+    // unchanged [purchaseId] dependency does not re-invoke the effect at all, so it
+    // would pass with the ranRef guard deleted — verified by deleting it.
     mockReceipt();
-    const { result, rerender } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
-    rerender(); // simulate the StrictMode double-invocation the ranRef guard defends against
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }), {
+      wrapper: StrictMode,
+    });
 
     await waitFor(() => expect(result.current.status).toBe('confirmed'));
 

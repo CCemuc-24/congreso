@@ -8,6 +8,7 @@
     "vercel-build": "prisma generate && (export DATABASE_URL=\"${DATABASE_URL:-${CCEM_POSTGRES_PRISMA_URL:-$CCEM_DATABASE_URL}}\" DIRECT_URL=\"${DIRECT_URL:-${CCEM_DATABASE_URL_UNPOOLED:-$CCEM_POSTGRES_URL_NON_POOLING}}\" && prisma migrate deploy && tsx prisma/seed.ts || echo 'WARN: prisma migrate/seed skipped — check Vercel DB env vars') && next build",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:seed": "prisma db seed",

@@ -1,11 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import type { User, Course, Purchase, Enrollment } from '@prisma/client';
 import { CourseType, Prisma } from '@prisma/client';
-import type { PaymentStatus as PrismaPaymentStatus } from '@prisma/client';
-import { PaymentStatus } from '../src/domain/paymentStatus';
+// A VALUE import, not `import type`: @prisma/client exports PaymentStatus both as
+// a runtime object and as the type derived from it, and the runtime object is what
+// makes the assertion below execute rather than merely compile.
+import { PaymentStatus as PrismaPaymentStatus } from '@prisma/client';
+import { PaymentStatus, paymentStatusValues } from '../src/domain/paymentStatus';
 
-// These are type-level assertions compiled by Vitest's esbuild/tsc pipeline.
-// If the schema/generated client is missing a field, this file fails to compile.
+// Most of this file is type-level assertions: if the schema or the generated client
+// is missing a field, it fails to COMPILE. That is enforced by `npm run typecheck`
+// (tsc --noEmit) and by `next build` — NOT by `npm run test`. Vitest transforms TS
+// with esbuild, which strips types without checking them, so a type-only assertion
+// here can never fail a test run. Anything that must hold under `npm run test`
+// needs a runtime assertion, as the PaymentStatus case below has.
 
 // Mutual type-equality check. A plain `const x: Wide[] = narrow` only checks
 // one direction (a narrower union is always assignable into a wider one), so
@@ -61,17 +68,27 @@ describe('prisma generated types', () => {
   });
 
   it('PaymentStatus domain enum matches the generated Prisma enum', () => {
-    const all: PaymentStatus[] = [
-      PaymentStatus.PENDING, PaymentStatus.PAID, PaymentStatus.REJECTED,
-      PaymentStatus.ABORTED, PaymentStatus.TIMEOUT, PaymentStatus.ERROR,
-    ];
-    // The real assertion is the type, not the runtime check: if the domain
-    // enum and the generated Prisma enum drift in either direction,
-    // `IsExactly<...>` resolves to `false` and assigning `true` to it stops
-    // this file from compiling (checked via `tsc --noEmit`, since Vitest's
-    // esbuild transform strips types without checking them — see note below).
+    // Compared against the RUNTIME enum object Prisma generates, so this executes
+    // under Vitest. The previous version asserted only `IsExactly<…> = true` and
+    // `toHaveLength(6)` on a literal the test itself wrote: Vitest's esbuild
+    // transform strips types without checking them, so nothing ran and adding a
+    // seventh domain member left the file at 3/3 passing. Both directions are
+    // covered — a member on either side alone breaks the toEqual.
+    const prismaMembers = Object.keys(PrismaPaymentStatus).sort();
+    expect(Object.keys(PaymentStatus).sort()).toEqual(prismaMembers);
+    // The parallel `paymentStatusValues` array (used for zod enums) has to track the
+    // same list, and had no test of its own at all.
+    expect([...paymentStatusValues].sort()).toEqual(prismaMembers);
+    // Every key maps to itself, as a Postgres enum does — so the values are checked
+    // too, not just the member names.
+    expect(Object.values(PaymentStatus)).toEqual(Object.keys(PaymentStatus));
+    expect(prismaMembers).toHaveLength(6);
+
+    // Kept alongside the runtime check, not replaced by it: this catches type-level
+    // drift the runtime cannot see. If the two enums diverge in either direction,
+    // `IsExactly<…>` resolves to `false` and assigning `true` to it stops this file
+    // from compiling. Only `npm run typecheck` enforces it — see the note above.
     const typesMatch: IsExactly<PaymentStatus, PrismaPaymentStatus> = true;
     expect(typesMatch).toBe(true);
-    expect(all).toHaveLength(6);
   });
 });
