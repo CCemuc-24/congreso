@@ -6,6 +6,25 @@ import { PaymentStatus } from '../src/domain/paymentStatus';
 
 // These are type-level assertions compiled by Vitest's esbuild/tsc pipeline.
 // If the schema/generated client is missing a field, this file fails to compile.
+
+// Mutual type-equality check. A plain `const x: Wide[] = narrow` only checks
+// one direction (a narrower union is always assignable into a wider one), so
+// it silently passes if the Prisma enum gains a member the domain enum
+// lacks — verified by temporarily adding a 7th Prisma member and observing
+// that assignment still compiled.
+//
+// The direct generic-constraint form `type AssertEqual<A extends B, B
+// extends A> = true` is NOT valid TypeScript for this: it reports TS2313
+// ("Type parameter 'A' has a circular constraint") on the declaration itself,
+// unconditionally — confirmed with `tsc --noEmit` even when the two enums
+// are perfectly in sync, so it can't be the mechanism here. Wrapping each
+// side in a covariant function-type position blocks TS's usual member-wise
+// distribution over unions and gives a real two-way equality check instead:
+type IsExactly<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2)
+    ? true
+    : false;
+
 describe('prisma generated types', () => {
   it('CourseType enum has core/elective/workshop', () => {
     expect(CourseType.core).toBe('core');
@@ -46,9 +65,13 @@ describe('prisma generated types', () => {
       PaymentStatus.PENDING, PaymentStatus.PAID, PaymentStatus.REJECTED,
       PaymentStatus.ABORTED, PaymentStatus.TIMEOUT, PaymentStatus.ERROR,
     ];
-    // Assignability to the generated Prisma enum is the real assertion here:
-    // if the two drift, this file stops compiling.
-    const asPrisma: PrismaPaymentStatus[] = all;
-    expect(asPrisma).toHaveLength(6);
+    // The real assertion is the type, not the runtime check: if the domain
+    // enum and the generated Prisma enum drift in either direction,
+    // `IsExactly<...>` resolves to `false` and assigning `true` to it stops
+    // this file from compiling (checked via `tsc --noEmit`, since Vitest's
+    // esbuild transform strips types without checking them — see note below).
+    const typesMatch: IsExactly<PaymentStatus, PrismaPaymentStatus> = true;
+    expect(typesMatch).toBe(true);
+    expect(all).toHaveLength(6);
   });
 });
