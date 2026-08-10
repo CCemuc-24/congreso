@@ -1,45 +1,59 @@
 'use client';
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { CheckCircle2 } from 'lucide-react';
 import Header from '@/components/header';
 import BuyInfo from '@/components/buyInfo';
 import { useConfirmation } from '@/components/inscriptions/useConfirmation';
 
 const ConfirmationContent: React.FC = () => {
-  const router = useRouter();
   const searchParams = useSearchParams();
-
-  const tokenWs = searchParams.get('token_ws');
   const purchaseId = searchParams.get('purchaseId');
-  const tbkToken = searchParams.get('TBK_TOKEN');
-  const tbkOrden = searchParams.get('TBK_ORDEN_COMPRA');
-  const tbkSesion = searchParams.get('TBK_ID_SESION');
-  const aborted = Boolean((tbkToken && tbkOrden) || tbkSesion);
 
-  const { confirmed, courses, user, errorRedirect, resendEmail } = useConfirmation({ tokenWs, purchaseId, aborted });
-
-  useEffect(() => {
-    if (errorRedirect) router.push(errorRedirect);
-  }, [errorRedirect, router]);
+  // No token_ws, no TBK_* handling: /api/webpay/return already committed the
+  // payment and redirected failures straight to /error.
+  const { status, courses, user, resendEmail } = useConfirmation({ purchaseId });
 
   const removeLocalStorage = () => localStorage.removeItem('user_id');
 
   return (
     <div className="mx-auto max-w-2xl px-6">
       <div className="mb-2 flex items-center gap-3">
-        {confirmed && <CheckCircle2 className="h-7 w-7 text-primary" />}
+        {status === 'confirmed' && <CheckCircle2 className="h-7 w-7 text-primary" />}
         <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground">Confirmación de Orden</h2>
       </div>
-      {confirmed ? (
+      {status === 'confirmed' && (
         <p className="mb-8 text-muted-foreground">
           Tu número de orden es <span className="font-mono font-medium text-foreground">{purchaseId}</span>. Recuerda que te llegará una copia al correo electrónico que hayas indicado en el formulario.
         </p>
-      ) : (
+      )}
+      {status === 'not_found' && (
+        <p className="mb-8 text-muted-foreground">
+          No encontramos esta compra. Revisa el enlace o contáctanos si crees que es un error.
+        </p>
+      )}
+      {status === 'pending' && (
+        <p className="mb-8 text-muted-foreground">
+          Tu compra aún no ha sido confirmada. Si ya realizaste el pago, puede tardar unos minutos en reflejarse aquí.
+        </p>
+      )}
+      {/* Terminal statuses (rechazada, anulada, expirada, error) get their own copy:
+          telling someone whose payment was rejected to wait a few minutes is false. */}
+      {status === 'failed' && (
+        <p className="mb-8 text-muted-foreground">
+          El pago de esta compra no se completó. Puedes intentarlo nuevamente desde el inicio, o contáctanos si crees que es un error.
+        </p>
+      )}
+      {status === 'loading' && (
         <p className="mb-8 text-muted-foreground">Confirmando tu compra...</p>
       )}
-      <BuyInfo courses={courses} user={user} />
+      {/* Only once the receipt has actually loaded. BuyInfo renders "Cargando..."
+          whenever courses is empty, so rendering it unconditionally put a loading
+          message directly underneath "No encontramos esta compra". */}
+      {(status === 'confirmed' || status === 'pending' || status === 'failed') && (
+        <BuyInfo courses={courses} user={user} />
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <Link
           href="/"

@@ -3,212 +3,112 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     purchase: { findUnique: vi.fn() },
-    $transaction: vi.fn(),
+    user: { findUnique: vi.fn() },
+    course: { findMany: vi.fn() },
   },
 }));
-
 vi.mock('@/lib/webpay', () => ({
   createWebpayTransaction: vi.fn(),
   commitWebpayTransaction: vi.fn(),
 }));
-
-vi.mock('@/lib/auth', () => ({ assertAdmin: vi.fn() }));
 vi.mock('@/domain/buyOrder', () => ({ generateBuyOrder: vi.fn() }));
-vi.mock('@/lib/mailer', () => ({ sendMail: vi.fn() }));
-vi.mock('@/lib/confirmationEmail', () => ({ buildConfirmationEmailHtml: vi.fn() }));
+vi.mock('@/lib/auth', () => ({ assertAdmin: vi.fn() }));
+vi.mock('@/lib/purchaseEmail', () => ({ sendPurchaseConfirmation: vi.fn() }));
 
 import { prisma } from '@/lib/prisma';
-import { commitWebpayTransaction } from '@/lib/webpay';
-import { confirmPurchase } from './purchases';
+import * as purchases from './purchases';
+import { getPurchaseReceipt } from './purchases';
 
 const prismaMock = prisma as unknown as {
   purchase: { findUnique: ReturnType<typeof vi.fn> };
-  $transaction: ReturnType<typeof vi.fn>;
+  user: { findUnique: ReturnType<typeof vi.fn> };
+  course: { findMany: ReturnType<typeof vi.fn> };
 };
-const mockCommitWebpay = commitWebpayTransaction as unknown as ReturnType<typeof vi.fn>;
 
-const USER = 'u-1';
-const PURCHASED = 'course-elective';
-const CORE = 'course-core';
-
-// Build a fake tx client whose enrollment.findUnique returns null (no existing)
-// and whose course.updateMany reports 1 row affected (capacity available).
-function makeTx(overrides: Record<string, unknown> = {}) {
-  return {
-    purchase: { update: vi.fn().mockResolvedValue({ id: 'p1', userId: USER, isPaid: true, coursesIds: [PURCHASED] }) },
-    course: {
-      findMany: vi.fn().mockResolvedValue([{ id: CORE }]), // core courses
-      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-    },
-    enrollment: {
-      findUnique: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({ id: 'e1' }),
-    },
-    ...overrides,
-  };
-}
+const ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('confirmPurchase', () => {
-  it('returns 404 when the purchase does not exist', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue(null);
-    const res = await confirmPurchase('missing', 'tok');
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.error).toBe('La compra no fue encontrada');
-      expect(res.status).toBe(404);
-    }
-    expect(mockCommitWebpay).not.toHaveBeenCalled();
+describe('confirmPurchase removal', () => {
+  it('is no longer exported — the commit is not reachable from the client', () => {
+    // A 'use server' export is an addressable RPC endpoint. Committing a Webpay
+    // transaction must only happen inside the return Route Handler.
+    expect('confirmPurchase' in purchases).toBe(false);
   });
+});
 
-  it('returns 402 when the webpay commit errors', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1', userId: USER, isPaid: false, coursesIds: [PURCHASED] });
-    mockCommitWebpay.mockResolvedValue({ status: 'ERROR', error: 'boom' });
-    const res = await confirmPurchase('p1', 'tok');
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.status).toBe(402);
-    expect(prismaMock.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('is idempotent: returns ok WITHOUT committing or a transaction when already paid', async () => {
-    const paid = { id: 'p1', userId: USER, isPaid: true, coursesIds: [PURCHASED] };
-    prismaMock.purchase.findUnique.mockResolvedValue(paid);
-    const res = await confirmPurchase('p1', 'tok');
-    expect(res.ok).toBe(true);
-    if (res.ok) {
-      expect(res.data.purchase).toEqual(paid);
-      // A paid purchase short-circuits BEFORE commit, with a synthesized AUTHORIZED status.
-      expect(res.data.transactionStatus).toEqual({ status: 'AUTHORIZED' });
-    }
-    expect(mockCommitWebpay).not.toHaveBeenCalled();
-    expect(prismaMock.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('returns 400 when the transaction status is not AUTHORIZED', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1', userId: USER, isPaid: false, coursesIds: [PURCHASED] });
-    mockCommitWebpay.mockResolvedValue({ status: 'FAILED' });
-    const res = await confirmPurchase('p1', 'tok');
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.error).toBe('Transacción no autorizada');
-      expect(res.status).toBe(400);
-    }
-    expect(prismaMock.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('on AUTHORIZED runs ONE transaction: marks paid, enrolls purchased+core, decrements capacity', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1', userId: USER, isPaid: false, coursesIds: [PURCHASED] });
-    mockCommitWebpay.mockResolvedValue({ status: 'AUTHORIZED', amount: 1000 });
-
-    const tx = makeTx();
-    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
-
-    const res = await confirmPurchase('p1', 'tok');
-
-    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
-    expect(tx.purchase.update).toHaveBeenCalledWith({ where: { id: 'p1' }, data: { isPaid: true } });
-    // Enrolled in BOTH the purchased course and the core course.
-    expect(tx.enrollment.create).toHaveBeenCalledTimes(2);
-    const enrolledCourseIds = tx.enrollment.create.mock.calls.map((c: unknown[]) => (c[0] as { data: { courseId: string } }).data.courseId).sort();
-    expect(enrolledCourseIds).toEqual([CORE, PURCHASED].sort());
-    // Capacity decremented with the oversell guard (capacity > 0) for each new enrollment.
-    expect(tx.course.updateMany).toHaveBeenCalledTimes(2);
-    expect(tx.course.updateMany).toHaveBeenCalledWith({
-      where: { id: PURCHASED, capacity: { gt: 0 } },
-      data: { capacity: { decrement: 1 } },
-    });
-    expect(res.ok).toBe(true);
-    if (res.ok) expect(res.data.transactionStatus).toEqual({ status: 'AUTHORIZED', amount: 1000 });
-  });
-
-  it('skips enrollment + capacity decrement when an enrollment already exists', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1', userId: USER, isPaid: false, coursesIds: [PURCHASED] });
-    mockCommitWebpay.mockResolvedValue({ status: 'AUTHORIZED' });
-
-    const tx = makeTx({
-      course: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-      enrollment: {
-        findUnique: vi.fn().mockResolvedValue({ id: 'existing' }),
-        create: vi.fn(),
-      },
-    });
-    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
-
-    const res = await confirmPurchase('p1', 'tok');
-
-    expect(tx.enrollment.create).not.toHaveBeenCalled();
-    expect(tx.course.updateMany).not.toHaveBeenCalled();
-    expect(res.ok).toBe(true);
-  });
-
-  it('rolls back (fails) when a PURCHASED course is full at decrement time (oversell guard)', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1', userId: USER, isPaid: false, coursesIds: [PURCHASED] });
-    mockCommitWebpay.mockResolvedValue({ status: 'AUTHORIZED' });
-
-    const tx = makeTx({
-      course: {
-        findMany: vi.fn().mockResolvedValue([]), // no core courses for this case
-        updateMany: vi.fn().mockResolvedValue({ count: 0 }), // purchased course full -> 0 rows affected
-      },
-    });
-    // $transaction propagates the thrown error (real Prisma would roll back).
-    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
-
-    const res = await confirmPurchase('p1', 'tok');
-
+describe('getPurchaseReceipt', () => {
+  it('rejects a non-uuid id', async () => {
+    const res = await getPurchaseReceipt('nope');
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.status).toBe(400);
+    expect(prismaMock.purchase.findUnique).not.toHaveBeenCalled();
   });
 
-  it('does NOT block confirmation when only a CORE course is full (core decrement never throws)', async () => {
-    // Purchased course has capacity; the auto-enrolled CORE course is full (updateMany count 0)
-    // but must not roll back the transaction.
-    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1', userId: USER, isPaid: false, coursesIds: [PURCHASED] });
-    mockCommitWebpay.mockResolvedValue({ status: 'AUTHORIZED' });
+  it('returns 404 when the purchase does not exist', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue(null);
+    const res = await getPurchaseReceipt(ID);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.status).toBe(404);
+  });
 
-    const updateMany = vi
-      .fn()
-      // first call: the purchased course (capacity available)
-      .mockResolvedValueOnce({ count: 1 })
-      // second call: the full CORE course (0 rows affected) — must NOT throw
-      .mockResolvedValueOnce({ count: 0 });
-
-    const tx = makeTx({
-      course: {
-        findMany: vi.fn().mockResolvedValue([{ id: CORE }]),
-        updateMany,
-      },
-      enrollment: {
-        findUnique: vi.fn().mockResolvedValue(null),
-        create: vi.fn().mockResolvedValue({ id: 'e1' }),
-      },
+  it('returns the purchase, its courses (purchased + core, deduped) and the buyer in one call', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue({
+      id: ID, userId: 'u1', coursesIds: ['c1'], isPaid: true, status: 'PAID', amount: 25900,
     });
-    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
+    prismaMock.course.findMany
+      .mockResolvedValueOnce([{ id: 'core1', title: 'Base', type: 'core', week: 0, price: 0 }])
+      .mockResolvedValueOnce([{ id: 'c1', title: 'Elec', type: 'elective', week: 1, price: 25900 }]);
+    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', email: 'a@uc.cl', names: 'Ana' });
 
-    const res = await confirmPurchase('p1', 'tok');
+    const res = await getPurchaseReceipt(ID);
 
     expect(res.ok).toBe(true);
-    expect(tx.enrollment.create).toHaveBeenCalledTimes(2); // purchased + core both enrolled
+    if (res.ok) {
+      expect(res.data.courses.map((c) => c.id).sort()).toEqual(['c1', 'core1']);
+      expect(res.data.user?.email).toBe('a@uc.cl');
+      expect(res.data.purchase.status).toBe('PAID');
+    }
   });
 
-  it('returns 500 when an unexpected error is thrown inside the transaction (infra failure)', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1', userId: USER, isPaid: false, coursesIds: [PURCHASED] });
-    mockCommitWebpay.mockResolvedValue({ status: 'AUTHORIZED' });
-
-    const tx = makeTx({
-      purchase: { update: vi.fn().mockRejectedValue(new Error('connection reset')) },
+  it('reads only the public columns, so no Webpay token ever reaches the browser', async () => {
+    // /confirmation is unauthenticated by design (this app has no identity
+    // mechanism), so anyone holding a purchase UUID can call this action — and a
+    // Server Action serializes its entire return value regardless of what the
+    // caller destructures. Asserted as an exact object: adding token,
+    // authorizationCode, paymentTypeCode or buyOrder here must fail the suite.
+    prismaMock.purchase.findUnique.mockResolvedValue({
+      id: ID, userId: 'u1', coursesIds: [], isPaid: true, status: 'PAID', amount: 0,
     });
-    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
+    prismaMock.course.findMany.mockResolvedValue([]);
+    prismaMock.user.findUnique.mockResolvedValue(null);
 
-    const res = await confirmPurchase('p1', 'tok');
+    await getPurchaseReceipt(ID);
 
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.status).toBe(500);
-      expect(res.error).toBe('connection reset');
-    }
+    expect(prismaMock.purchase.findUnique).toHaveBeenCalledWith({
+      where: { id: ID },
+      select: {
+        id: true,
+        userId: true,
+        coursesIds: true,
+        status: true,
+        amount: true,
+        isPaid: true,
+      },
+    });
+  });
+
+  it('still returns the receipt when the buyer record cannot be loaded', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue({
+      id: ID, userId: 'u1', coursesIds: [], isPaid: true, status: 'PAID', amount: 0,
+    });
+    prismaMock.course.findMany.mockResolvedValue([]);
+    prismaMock.user.findUnique.mockResolvedValue(null);
+
+    const res = await getPurchaseReceipt(ID);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.user).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 // src/schemas/purchase.test.ts
 import { describe, it, expect } from 'vitest';
-import { purchaseCreateSchema, sendConfirmationSchema, updatePurchaseSchema } from './purchase';
+import { purchaseCreateSchema, resendConfirmationSchema, updatePurchaseSchema } from './purchase';
 
 describe('purchaseCreateSchema', () => {
   const valid = {
@@ -26,24 +26,29 @@ describe('purchaseCreateSchema', () => {
   });
 });
 
-describe('sendConfirmationSchema', () => {
-  const valid = {
-    purchaseId: '33333333-3333-3333-3333-333333333333',
-    email: 'ada@example.com',
-  };
-  it('accepts a valid confirmation payload (purchaseId + email only)', () => {
-    expect(sendConfirmationSchema.safeParse(valid).success).toBe(true);
+describe('resendConfirmationSchema', () => {
+  const valid = { purchaseId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' };
+
+  it('accepts a uuid purchaseId', () => {
+    expect(resendConfirmationSchema.safeParse(valid).success).toBe(true);
   });
-  it('rejects a malformed email', () => {
-    const r = sendConfirmationSchema.safeParse({ ...valid, email: 'nope' });
+
+  it('rejects a non-uuid purchaseId', () => {
+    const r = resendConfirmationSchema.safeParse({ purchaseId: 'nope' });
     expect(r.success).toBe(false);
-    if (!r.success) expect(r.error.issues[0].path).toEqual(['email']);
   });
+
   it('rejects a missing purchaseId', () => {
-    const { purchaseId, ...rest } = valid;
-    const r = sendConfirmationSchema.safeParse(rest);
+    const r = resendConfirmationSchema.safeParse({});
     expect(r.success).toBe(false);
-    if (!r.success) expect(r.error.issues[0].path).toEqual(['purchaseId']);
+  });
+
+  it('no longer accepts a caller-supplied recipient', () => {
+    // The recipient is resolved from the purchase owner. An extra email key is
+    // stripped by zod rather than honoured — assert it never reaches parsed output.
+    const r = resendConfirmationSchema.safeParse({ ...valid, email: 'attacker@evil.cl' });
+    expect(r.success).toBe(true);
+    if (r.success) expect('email' in r.data).toBe(false);
   });
 });
 
@@ -58,5 +63,15 @@ describe('updatePurchaseSchema', () => {
     const r = updatePurchaseSchema.safeParse({ isPaid: 'yes' });
     expect(r.success).toBe(false);
     if (!r.success) expect(r.error.issues[0].path).toEqual(['isPaid']);
+  });
+  it('accepts a valid status value', () => {
+    const r = updatePurchaseSchema.safeParse({ status: 'PAID' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.status).toBe('PAID');
+  });
+  it('rejects an invalid status value', () => {
+    const r = updatePurchaseSchema.safeParse({ status: 'NOT_A_STATUS' });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0].path).toEqual(['status']);
   });
 });

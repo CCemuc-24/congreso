@@ -1,5 +1,6 @@
 // src/schemas/purchase.ts
 import { z } from 'zod';
+import { paymentStatusValues } from '@/domain/paymentStatus';
 
 // Mirrors ccemuc-api/src/interfaces/purchase.interface.ts (PurchaseAttributes, minus id).
 // buyOrder and isPaid are server-generated, never client input.
@@ -8,19 +9,22 @@ export const purchaseCreateSchema = z.object({
   coursesIds: z.array(z.string().uuid()).min(1),
 });
 
-// Server-side confirmation: the action loads the purchase + courses and builds the
-// email HTML itself, so the client only supplies the purchase id and recipient email.
-export const sendConfirmationSchema = z.object({
-  purchaseId: z.string().uuid(),
-  email: z.string().email(),
+// The recipient is resolved server-side from the purchase owner, so the only
+// input is which purchase to re-send. Also gates getPurchaseReceipt's input —
+// both callers take only a purchaseId. Custom message: this surfaces as the
+// 400 error text on a Spanish-language UI, and zod's default uuid message is
+// English.
+export const resendConfirmationSchema = z.object({
+  purchaseId: z.string().uuid('El identificador de la compra no es válido'),
 });
 
 // Fix 9: updatePurchase input validation (replaces casting to Prisma.PurchaseUpdateInput).
 export const updatePurchaseSchema = z.object({
   isPaid: z.boolean().optional(),
   buyOrder: z.string().optional(),
+  status: z.enum(paymentStatusValues).optional(),
 });
 
 export type PurchaseCreateInput = z.infer<typeof purchaseCreateSchema>;
-export type SendConfirmationInput = z.infer<typeof sendConfirmationSchema>;
+export type ResendConfirmationInput = z.infer<typeof resendConfirmationSchema>;
 export type UpdatePurchaseInput = z.infer<typeof updatePurchaseSchema>;

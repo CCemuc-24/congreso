@@ -1,26 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { ok, fail } from '@/domain/result';
 
 vi.mock('@/actions/purchases', () => ({
-  confirmPurchase: vi.fn(),
-  getPurchaseById: vi.fn(),
-  sendConfirmation: vi.fn(),
-}));
-vi.mock('@/actions/courses', () => ({
-  getCourses: vi.fn(),
-  getCourseById: vi.fn(),
-}));
-vi.mock('@/actions/users', () => ({
-  getUserById: vi.fn(),
+  getPurchaseReceipt: vi.fn(),
+  resendConfirmation: vi.fn(),
 }));
 
-import { confirmPurchase, getPurchaseById, sendConfirmation } from '@/actions/purchases';
-import { getCourses, getCourseById } from '@/actions/courses';
-import { getUserById } from '@/actions/users';
+import { getPurchaseReceipt, resendConfirmation } from '@/actions/purchases';
 import { useConfirmation } from './useConfirmation';
 
-const purchase = { id: 'p1', userId: 'u1', buyOrder: 'bo', isPaid: true, coursesIds: ['c1'], createdAt: new Date(), updatedAt: new Date() };
+const purchase = { id: 'p1', userId: 'u1', buyOrder: 'bo', isPaid: true, coursesIds: ['c1'], status: 'PAID', createdAt: new Date(), updatedAt: new Date() };
 const coreCourse = { id: 'core1', title: 'Base', module: 1, type: 'core', price: 0, capacity: 5, features: null, week: 0, topics: [], createdAt: new Date(), updatedAt: new Date() };
 const boughtCourse = { id: 'c1', title: 'Elec', module: 2, type: 'elective', price: 15000, capacity: 5, features: null, week: 1, topics: [], createdAt: new Date(), updatedAt: new Date() };
 const user = { id: 'u1', names: 'Ada', lastNames: 'L', rut: '1-9', email: 'a@b.cl', university: 'UC', carrerYear: 3, createdAt: new Date(), updatedAt: new Date() };
@@ -29,66 +20,153 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-function mockSuccess() {
-  vi.mocked(confirmPurchase).mockResolvedValue(ok({ purchase, transactionStatus: { status: 'AUTHORIZED' } }) as any);
-  vi.mocked(getPurchaseById).mockResolvedValue(ok(purchase) as any);
-  vi.mocked(getCourseById).mockResolvedValue(ok(boughtCourse) as any);
-  vi.mocked(getCourses).mockResolvedValue(ok([coreCourse, boughtCourse]) as any);
-  vi.mocked(getUserById).mockResolvedValue(ok(user) as any);
-  vi.mocked(sendConfirmation).mockResolvedValue(ok(null) as any);
+function mockReceipt(overrides: Record<string, unknown> = {}) {
+  vi.mocked(getPurchaseReceipt).mockResolvedValue(
+    ok({ purchase, courses: [coreCourse, boughtCourse], user, ...overrides }) as any,
+  );
 }
 
 describe('useConfirmation', () => {
-  it('confirms, loads info (core + bought + user) and sends email once', async () => {
-    mockSuccess();
-    const { result } = renderHook(() =>
-      useConfirmation({ tokenWs: 'tok', purchaseId: 'p1', aborted: false }),
-    );
+  it('loads the receipt in exactly one call under a real StrictMode double-invocation', async () => {
+    // Rendered inside StrictMode, which in a development React build mounts the
+    // effect, tears it down, and mounts it AGAIN. A plain rerender() with an
+    // unchanged [purchaseId] dependency does not re-invoke the effect at all, so it
+    // would pass with the ranRef guard deleted — verified by deleting it.
+    mockReceipt();
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }), {
+      wrapper: StrictMode,
+    });
 
-    await waitFor(() => expect(result.current.confirmed).toBe(true));
-    await waitFor(() => expect(result.current.isMailSent).toBe(true));
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
 
-    expect(confirmPurchase).toHaveBeenCalledWith('p1', 'tok');
-    // core + bought courses both present, deduped
+    expect(getPurchaseReceipt).toHaveBeenCalledTimes(1);
+    expect(getPurchaseReceipt).toHaveBeenCalledWith('p1');
+  });
+
+  it('starts in the loading state before the receipt resolves', () => {
+    // A promise that never resolves: proves the initial synchronous state
+    // without leaving a dangling async state update to fire after the test
+    // ends (which would otherwise trip an act(...) warning in a later test).
+    vi.mocked(getPurchaseReceipt).mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+    expect(result.current.status).toBe('loading');
+  });
+
+  it('sets status to confirmed and isMailSent from a PAID receipt, and loads courses + user in one call', async () => {
+    mockReceipt();
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
+    expect(result.current.isMailSent).toBe(true);
+    // Only getPurchaseReceipt was invoked to load — no per-course fetch of any kind.
+    expect(getPurchaseReceipt).toHaveBeenCalledTimes(1);
     const ids = result.current.courses.map((c) => c.id).sort();
     expect(ids).toEqual(['c1', 'core1']);
     expect(result.current.user?.email).toBe('a@b.cl');
-    expect(sendConfirmation).toHaveBeenCalledTimes(1);
-    expect(sendConfirmation).toHaveBeenCalledWith({ purchaseId: 'p1', email: 'a@b.cl' });
-    expect(result.current.errorRedirect).toBeNull();
   });
 
-  it('sets errorRedirect when confirm fails, and does not send email', async () => {
-    vi.mocked(confirmPurchase).mockResolvedValue(fail('Pago no realizado', 402) as any);
-    const { result } = renderHook(() =>
-      useConfirmation({ tokenWs: 'tok', purchaseId: 'p1', aborted: false }),
-    );
+  it('sets status to pending (not confirmed) for a purchase that exists but has not settled', async () => {
+    // isPaid: false as well as status: PENDING — a genuinely unsettled row. The two
+    // are mirrors, and isPaid alone is enough to count as settled.
+    mockReceipt({ purchase: { ...purchase, isPaid: false, status: 'PENDING' } });
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
 
-    await waitFor(() => expect(result.current.errorRedirect).not.toBeNull());
-    expect(result.current.errorRedirect).toContain('/error');
-    expect(result.current.errorRedirect).toContain('message=Pago%20no%20realizado');
-    expect(result.current.confirmed).toBe(false);
-    expect(sendConfirmation).not.toHaveBeenCalled();
+    await waitFor(() => expect(getPurchaseReceipt).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.status).toBe('pending'));
+    expect(result.current.isMailSent).toBe(false);
+    // The receipt still loaded — courses/user are populated even though the
+    // purchase hasn't settled. This is the state a stale-but-real link lands on.
+    expect(result.current.courses.length).toBeGreaterThan(0);
   });
 
-  it('redirects to error on Transbank abort (no token)', async () => {
-    const { result } = renderHook(() =>
-      useConfirmation({ tokenWs: null, purchaseId: null, aborted: true }),
-    );
-    await waitFor(() => expect(result.current.errorRedirect).not.toBeNull());
-    expect(result.current.errorRedirect).toContain('message=Error%20en%20la%20compra');
-    expect(confirmPurchase).not.toHaveBeenCalled();
+  it('sets status to not_found — distinct from pending — when the receipt fails to load', async () => {
+    vi.mocked(getPurchaseReceipt).mockResolvedValue(fail('La compra no fue encontrada', 404) as any);
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+    await waitFor(() => expect(result.current.status).toBe('not_found'));
+    expect(result.current.isMailSent).toBe(false);
+    expect(result.current.courses).toEqual([]);
+    expect(result.current.user).toBeNull();
   });
 
-  it('resendEmail re-sends even after isMailSent is true', async () => {
-    mockSuccess();
-    const { result } = renderHook(() =>
-      useConfirmation({ tokenWs: 'tok', purchaseId: 'p1', aborted: false }),
-    );
-    await waitFor(() => expect(result.current.isMailSent).toBe(true));
-    expect(sendConfirmation).toHaveBeenCalledTimes(1);
+  it('makes no action calls when purchaseId is null, and reports not_found instead of hanging', () => {
+    // There is no id to load and none will ever arrive, so 'loading' would leave
+    // /confirmation showing "Confirmando tu compra..." forever.
+    const { result } = renderHook(() => useConfirmation({ purchaseId: null }));
+    expect(result.current.status).toBe('not_found');
+    expect(getPurchaseReceipt).not.toHaveBeenCalled();
+    expect(resendConfirmation).not.toHaveBeenCalled();
+  });
 
-    await result.current.resendEmail();
-    expect(sendConfirmation).toHaveBeenCalledTimes(2);
+  it('still loads the receipt when purchaseId only arrives on a later render', async () => {
+    // The null branch must not consume the one-shot guard: search params can
+    // resolve after the first render.
+    mockReceipt();
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string | null }) => useConfirmation({ purchaseId: id }),
+      { initialProps: { id: null as string | null } },
+    );
+    expect(result.current.status).toBe('not_found');
+
+    rerender({ id: 'p1' });
+
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
+    expect(getPurchaseReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats isPaid: true with a PENDING status as confirmed', async () => {
+    // The shape a rollback window produces: the pre-hardening confirmPurchase set
+    // isPaid alone. Gating on status only would tell a payer whose card was charged
+    // that their purchase "aún no ha sido confirmada" permanently. Legacy rows
+    // predating the migration have the same shape.
+    mockReceipt({ purchase: { ...purchase, isPaid: true, status: 'PENDING' } });
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
+    expect(result.current.isMailSent).toBe(true);
+  });
+
+  it.each(['REJECTED', 'ABORTED', 'TIMEOUT', 'ERROR'])(
+    'reports a terminal %s purchase as failed, not pending',
+    async (terminalStatus) => {
+      // 'pending' copy promises the payment "puede tardar unos minutos", which is
+      // false for every one of these.
+      mockReceipt({ purchase: { ...purchase, isPaid: false, status: terminalStatus } });
+      const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+      await waitFor(() => expect(result.current.status).toBe('failed'));
+      expect(result.current.isMailSent).toBe(false);
+    },
+  );
+
+  it('resendEmail calls resendConfirmation with the id alone and sets isMailSent on success', async () => {
+    mockReceipt({ purchase: { ...purchase, isPaid: false, status: 'PENDING' } });
+    vi.mocked(resendConfirmation).mockResolvedValue(ok(null) as any);
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+    await waitFor(() => expect(getPurchaseReceipt).toHaveBeenCalledTimes(1));
+    expect(result.current.isMailSent).toBe(false);
+
+    await act(async () => {
+      await result.current.resendEmail();
+    });
+
+    expect(resendConfirmation).toHaveBeenCalledWith('p1');
+    expect(resendConfirmation).toHaveBeenCalledTimes(1);
+    expect(result.current.isMailSent).toBe(true);
+  });
+
+  it('resendEmail leaves isMailSent false when resendConfirmation fails, regardless of receipt load outcome', async () => {
+    vi.mocked(getPurchaseReceipt).mockResolvedValue(fail('La compra no fue encontrada', 404) as any);
+    vi.mocked(resendConfirmation).mockResolvedValue(fail('boom', 500) as any);
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+    await waitFor(() => expect(getPurchaseReceipt).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await result.current.resendEmail();
+    });
+    expect(resendConfirmation).toHaveBeenCalledWith('p1');
+    expect(result.current.isMailSent).toBe(false);
   });
 });

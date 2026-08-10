@@ -10,8 +10,9 @@ export type { ConfirmationEmailInput, EmailCourse } from '@/lib/confirmationEmai
 
 /**
  * React wrapper around the canonical server-side builder. The email itself is sent by
- * sendConfirmation (which calls buildConfirmationEmailHtml directly); this component
- * exists only for on-page preview/parity with the legacy <EmailConfirmation />.
+ * sendPurchaseConfirmation (src/lib/purchaseEmail.ts, which calls buildConfirmationEmailHtml
+ * directly); this component exists only for on-page preview/parity with the legacy
+ * <EmailConfirmation />.
  */
 export const EmailConfirmation: React.FC<ConfirmationEmailInput> = (input) => {
   return <div dangerouslySetInnerHTML={{ __html: buildConfirmationEmailHtml(input) }} />;

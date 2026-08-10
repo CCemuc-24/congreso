@@ -39,6 +39,20 @@ const prismaMock = prisma as unknown as {
 };
 const mockAssertAdmin = assertAdmin as unknown as ReturnType<typeof vi.fn>;
 
+// The exact column set the ungated reads may return. Asserted literally (not with
+// objectContaining) so that adding `token: true`, `authorizationCode: true`,
+// `paymentTypeCode: true` or `buyOrder: true` to the select breaks this test: a
+// Server Action serializes its whole return value to the browser, so widening the
+// select silently ships the payment audit trail to anyone holding an id.
+const PUBLIC_SELECT = {
+  id: true,
+  userId: true,
+  coursesIds: true,
+  status: true,
+  amount: true,
+  isPaid: true,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockAssertAdmin.mockReturnValue(undefined);
@@ -62,6 +76,10 @@ describe('getPurchases (admin)', () => {
     expect(mockAssertAdmin).toHaveBeenCalledWith('right');
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data).toEqual(rows);
+    // Deliberately NOT narrowed, unlike the ungated reads above: this one is gated
+    // on ADMIN_SECRET, and token/authorizationCode/paymentTypeCode exist precisely
+    // so an operator can reconcile and refund. No select at all is passed.
+    expect(prismaMock.purchase.findMany).toHaveBeenCalledWith();
   });
 });
 
@@ -83,6 +101,15 @@ describe('getPurchaseById', () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data).toEqual(row);
   });
+
+  it('reads only the public columns — never the payment audit trail', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue({ id: 'p1' });
+    await getPurchaseById('p1');
+    expect(prismaMock.purchase.findUnique).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      select: PUBLIC_SELECT,
+    });
+  });
 });
 
 describe('getUserPurchases', () => {
@@ -90,9 +117,17 @@ describe('getUserPurchases', () => {
     const rows = [{ id: 'p1', userId: 'u1' }];
     prismaMock.purchase.findMany.mockResolvedValue(rows);
     const res = await getUserPurchases('u1');
-    expect(prismaMock.purchase.findMany).toHaveBeenCalledWith({ where: { userId: 'u1' } });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data).toEqual(rows);
+  });
+
+  it('reads only the public columns — this action takes any userId and is ungated', async () => {
+    prismaMock.purchase.findMany.mockResolvedValue([]);
+    await getUserPurchases('u1');
+    expect(prismaMock.purchase.findMany).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      select: PUBLIC_SELECT,
+    });
   });
 });
 

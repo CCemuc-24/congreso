@@ -1,22 +1,57 @@
 'use server';
 
-import type { Purchase } from '@prisma/client';
+import type { Purchase, Course, User, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { createWebpayTransaction, commitWebpayTransaction } from '@/lib/webpay';
+import { createWebpayTransaction } from '@/lib/webpay';
 import { generateBuyOrder } from '@/domain/buyOrder';
 import { type ActionResult, ok, fail } from '@/domain/result';
 import { CourseType } from '@/domain/courseType';
+import { PaymentStatus } from '@/domain/paymentStatus';
 import { assertAdmin } from '@/lib/auth';
-import { sendMail } from '@/lib/mailer';
-import { buildConfirmationEmailHtml } from '@/lib/confirmationEmail';
+import { sendPurchaseConfirmation, PurchaseNotFoundError } from '@/lib/purchaseEmail';
 import {
   purchaseCreateSchema,
   type PurchaseCreateInput,
   updatePurchaseSchema,
   type UpdatePurchaseInput,
-  sendConfirmationSchema,
-  type SendConfirmationInput,
+  resendConfirmationSchema,
 } from '@/schemas/purchase';
+
+// Everything — and ONLY what — a browser is allowed to see of a Purchase.
+//
+// A Server Action serializes its ENTIRE return value to the client regardless of
+// what the caller destructures, so returning a whole `Purchase` row from an
+// ungated action ships the payment audit trail into the browser: `token` (the
+// Webpay token_ws), `authorizationCode`, `paymentTypeCode`, and `buyOrder` — the
+// single key that links a Transbank callback back to a row, and therefore the one
+// value the settle path treats as trustworthy. None of them is rendered anywhere.
+//
+// The admin-gated reads (getPurchases, updatePurchase) deliberately keep the full
+// row: recording those columns for refunds and reconciliation is exactly why this
+// branch added them, and an operator holding ADMIN_SECRET is the intended reader.
+const publicPurchaseSelect = {
+  id: true,
+  userId: true,
+  coursesIds: true,
+  status: true,
+  amount: true,
+  // Retained as a mirror of status === 'PAID'. Load-bearing for /confirmation,
+  // which treats either as settled so a row written by a rolled-back deploy
+  // (isPaid: true, status: PENDING) still renders as confirmed.
+  isPaid: true,
+} satisfies Prisma.PurchaseSelect;
+
+type PublicPurchase = Prisma.PurchaseGetPayload<{ select: typeof publicPurchaseSelect }>;
+
+/**
+ * Project a full row onto the public shape. Used where the action needs columns
+ * internally (createPurchase reads buyOrder to open the Webpay transaction) that
+ * the client must not receive, so a Prisma `select` can't do the narrowing.
+ */
+function toPublicPurchase(purchase: Purchase): PublicPurchase {
+  const { id, userId, coursesIds, status, amount, isPaid } = purchase;
+  return { id, userId, coursesIds, status, amount, isPaid };
+}
 
 function returnUrlFor(purchaseId: string): string {
   const base =
@@ -27,7 +62,9 @@ function returnUrlFor(purchaseId: string): string {
 
 export async function createPurchase(
   input: PurchaseCreateInput,
-): Promise<ActionResult<{ purchase: Purchase; webPayResponse?: { token: string; url: string } }>> {
+): Promise<
+  ActionResult<{ purchase: PublicPurchase; webPayResponse?: { token: string; url: string } }>
+> {
   const parsed = purchaseCreateSchema.safeParse(input);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -44,21 +81,39 @@ export async function createPurchase(
     return fail('One or more courses are full', 400);
   }
 
+  // The amount is frozen here, before the redirect, because the return handler
+  // verifies Transbank's committed amount against it. Recomputing at commit time
+  // would reject legitimate payments whenever a price changed mid-checkout.
+  const totalAmount = courses.reduce((sum, c) => sum + c.price, 0);
+
   // Create-or-retrieve an unpaid purchase by (userId, coursesIds).
   let purchase = await prisma.purchase.findFirst({
     where: { userId, coursesIds: { equals: coursesIds }, isPaid: false },
   });
   if (!purchase) {
     purchase = await prisma.purchase.create({
-      data: { userId, coursesIds, buyOrder: generateBuyOrder() },
+      data: {
+        userId,
+        coursesIds,
+        buyOrder: generateBuyOrder(),
+        amount: totalAmount,
+        status: PaymentStatus.PENDING,
+      },
+    });
+  } else if (purchase.amount !== totalAmount || purchase.status !== PaymentStatus.PENDING) {
+    // Re-quote a retrieved attempt: prices may have moved, and a previously
+    // ABORTED/TIMEOUT row must return to PENDING so the return handler is
+    // willing to settle it.
+    purchase = await prisma.purchase.update({
+      where: { id: purchase.id },
+      data: { amount: totalAmount, status: PaymentStatus.PENDING },
     });
   }
 
   if (purchase.isPaid) {
-    return ok({ purchase });
+    return ok({ purchase: toPublicPurchase(purchase) });
   }
 
-  const totalAmount = courses.reduce((sum, c) => sum + c.price, 0);
   const webPayResponse = await createWebpayTransaction(
     purchase.buyOrder!,
     purchase.userId,
@@ -66,7 +121,7 @@ export async function createPurchase(
     returnUrlFor(purchase.id),
   );
 
-  return ok({ purchase, webPayResponse });
+  return ok({ purchase: toPublicPurchase(purchase), webPayResponse });
 }
 
 export async function getPurchases(adminSecret: string): Promise<ActionResult<Purchase[]>> {
@@ -79,14 +134,20 @@ export async function getPurchases(adminSecret: string): Promise<ActionResult<Pu
   return ok(purchases);
 }
 
-export async function getPurchaseById(id: string): Promise<ActionResult<Purchase>> {
-  const purchase = await prisma.purchase.findUnique({ where: { id } });
+export async function getPurchaseById(id: string): Promise<ActionResult<PublicPurchase>> {
+  const purchase = await prisma.purchase.findUnique({
+    where: { id },
+    select: publicPurchaseSelect,
+  });
   if (!purchase) return fail('Purchase not found', 404);
   return ok(purchase);
 }
 
-export async function getUserPurchases(userId: string): Promise<ActionResult<Purchase[]>> {
-  const purchases = await prisma.purchase.findMany({ where: { userId } });
+export async function getUserPurchases(userId: string): Promise<ActionResult<PublicPurchase[]>> {
+  const purchases = await prisma.purchase.findMany({
+    where: { userId },
+    select: publicPurchaseSelect,
+  });
   return ok(purchases);
 }
 
@@ -131,98 +192,32 @@ export async function deletePurchase(id: string, adminSecret: string): Promise<A
   }
 }
 
-export async function confirmPurchase(
-  purchaseId: string,
-  tokenWs: string,
-): Promise<ActionResult<{ purchase: Purchase; transactionStatus: unknown }>> {
-  if (!tokenWs) {
-    return fail('Transbank no devolvió el código de confirmación', 400);
-  }
-
-  const purchase = await prisma.purchase.findUnique({ where: { id: purchaseId } });
-  if (!purchase) {
-    return fail('La compra no fue encontrada', 404);
-  }
-
-  // Idempotent BEFORE committing — a double-submit on an already-paid purchase
-  // short-circuits to ok() without re-committing the Webpay transaction or re-running
-  // any side effects.
-  if (purchase.isPaid) {
-    return ok({ purchase, transactionStatus: { status: 'AUTHORIZED' } });
-  }
-
-  const transactionStatus = await commitWebpayTransaction(tokenWs);
-
-  if (transactionStatus.status === 'ERROR') {
-    return fail(String(transactionStatus.error ?? 'Error en la transacción'), 402);
-  }
-
-  if (transactionStatus.status !== 'AUTHORIZED') {
-    return fail('Transacción no autorizada', 400);
-  }
-
-  try {
-    // Single atomic transaction (mark paid -> enroll -> decrement capacity).
-    const updated = await prisma.$transaction(async (tx) => {
-      const marked = await tx.purchase.update({ where: { id: purchase.id }, data: { isPaid: true } });
-
-      // Enroll in the purchased courses PLUS every core course.
-      const coreCourses = await tx.course.findMany({ where: { type: CourseType.core } });
-      const coreIds = coreCourses.map((c) => c.id);
-      const purchasedIds = new Set(purchase.coursesIds);
-      // Purchased courses first so the oversell guard runs on them before core courses.
-      const allCourseIds = Array.from(new Set([...purchase.coursesIds, ...coreIds]));
-
-      for (const courseId of allCourseIds) {
-        const existing = await tx.enrollment.findUnique({
-          where: { UserCourseUnique: { userId: purchase.userId, courseId } },
-        });
-        if (existing) continue;
-
-        await tx.enrollment.create({
-          data: { userId: purchase.userId, courseId, purchaseId: purchase.id },
-        });
-
-        // Conditional decrement closes the oversell window. The capacity guard
-        // (capacity > 0) applies to BOTH, but only PURCHASED courses roll back the
-        // transaction when full. CORE courses are auto-enrolled: decrement only if
-        // capacity remains, and NEVER throw (a full core course must not block confirmation).
-        const dec = await tx.course.updateMany({
-          where: { id: courseId, capacity: { gt: 0 } },
-          data: { capacity: { decrement: 1 } },
-        });
-        if (dec.count === 0 && purchasedIds.has(courseId)) {
-          throw new Error('One or more courses are full');
-        }
-      }
-
-      return marked;
-    });
-
-    return ok({ purchase: updated, transactionStatus });
-  } catch (error) {
-    // Distinguish the oversell business error (400) from unexpected/infra failures (500).
-    const msg = error instanceof Error ? error.message : 'Transaction failed';
-    const status = msg === 'One or more courses are full' ? 400 : 500;
-    return fail(msg, status);
-  }
-}
-
-export async function sendConfirmation(input: SendConfirmationInput): Promise<ActionResult<null>> {
-  const parsed = sendConfirmationSchema.safeParse(input);
+export async function getPurchaseReceipt(purchaseId: string): Promise<
+  ActionResult<{ purchase: PublicPurchase; courses: Course[]; user: User | null }>
+> {
+  const parsed = resendConfirmationSchema.safeParse({ purchaseId });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     return fail(issue.message, 400, issue.path[0]?.toString());
   }
-  const { purchaseId, email } = parsed.data;
 
-  const purchase = await prisma.purchase.findUnique({ where: { id: purchaseId } });
-  if (!purchase) return fail('Purchase not found', 404);
+  const purchase = await prisma.purchase.findUnique({
+    where: { id: parsed.data.purchaseId },
+    select: publicPurchaseSelect,
+  });
+  if (!purchase) return fail('La compra no fue encontrada', 404);
 
   try {
-    // Load the purchased courses PLUS every core course (these are the courses the buyer is enrolled in).
-    const coreCourses = await prisma.course.findMany({ where: { type: CourseType.core } });
-    const purchasedCourses = await prisma.course.findMany({ where: { id: { in: purchase.coursesIds } } });
+    // One round trip instead of the page's old per-course loop. The buyer is
+    // enrolled in the purchased courses PLUS every core course. The three
+    // queries are independent of each other (only the purchase lookup above
+    // gates them), so they run in parallel rather than as three sequential
+    // round trips on a page the buyer is actively waiting on.
+    const [coreCourses, purchasedCourses, user] = await Promise.all([
+      prisma.course.findMany({ where: { type: CourseType.core } }),
+      prisma.course.findMany({ where: { id: { in: purchase.coursesIds } } }),
+      prisma.user.findUnique({ where: { id: purchase.userId } }),
+    ]);
     const seen = new Set<string>();
     const courses = [...coreCourses, ...purchasedCourses].filter((c) => {
       if (seen.has(c.id)) return false;
@@ -230,10 +225,32 @@ export async function sendConfirmation(input: SendConfirmationInput): Promise<Ac
       return true;
     });
 
-    const html = buildConfirmationEmailHtml({ id: purchaseId, courses });
-    await sendMail(email, 'Confirmación de compra', html);
-    return ok(null);
+    return ok({ purchase, courses, user });
   } catch (error) {
     return fail((error as Error).message, 500);
+  }
+}
+
+export async function resendConfirmation(purchaseId: string): Promise<ActionResult<null>> {
+  const parsed = resendConfirmationSchema.safeParse({ purchaseId });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return fail(issue.message, 400, issue.path[0]?.toString());
+  }
+
+  try {
+    await sendPurchaseConfirmation(parsed.data.purchaseId);
+    return ok(null);
+  } catch (error) {
+    // Distinguished by type, not by matching this string against whatever
+    // sendPurchaseConfirmation happens to throw today — a typed error can't
+    // silently drift out of sync the way a copy-pasted message could.
+    if (error instanceof PurchaseNotFoundError) {
+      // The typed error's own message embeds the purchase id for logs; never
+      // forward that (or any other internal detail) to the client.
+      return fail('Purchase not found', 404);
+    }
+    const message = error instanceof Error ? error.message : 'Send failed';
+    return fail(message, 500);
   }
 }

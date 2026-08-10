@@ -12,8 +12,9 @@ export interface ConfirmationEmailInput {
  * Server-side replacement for the legacy <EmailConfirmation /> React component
  * (which the old frontend rendered with ReactDOMServer.renderToStaticMarkup and
  * POSTed to the API). The monolith builds the email HTML here, server-side, so
- * the client never renders or ships email markup. Called from sendConfirmation
- * (Phase 6) and re-exported by the Phase 9 mailConfirmation component.
+ * the client never renders or ships email markup. Called from
+ * sendPurchaseConfirmation (src/lib/purchaseEmail.ts) and re-exported by the
+ * Phase 9 mailConfirmation component.
  */
 export function buildConfirmationEmailHtml({ id, courses }: ConfirmationEmailInput): string {
   const price = courses.reduce((sum, course) => sum + course.price, 0);

@@ -9,5 +9,11 @@ export function generateBuyOrder(): string {
 
   const hash = createHash('sha256').update(rawBuyOrder).digest('hex');
 
+  // 26 is not a stylistic choice: it is exactly transbank-sdk's BUY_ORDER_LENGTH,
+  // the maximum Transaction.create accepts (it calls hasTextWithMaxLength(buyOrder,
+  // BUY_ORDER_LENGTH) and throws before the POST when the value is longer). There is
+  // zero headroom, so prefixing this value — e.g. an environment tag like 'TEST-' —
+  // would start throwing from inside the SDK rather than failing a check here.
+  // Shorten the hash slice by however many characters any prefix adds.
   return hash.substring(0, 26);
 }

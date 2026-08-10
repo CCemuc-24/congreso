@@ -16,11 +16,11 @@ export function getWebpayTransaction(): InstanceType<typeof WebpayPlus.Transacti
 
   const commerceCode = isProduction
     ? (process.env.WEBPAY_COMMERCE_CODE ?? '')
-    : (process.env.WEBPAY_COMMERCE_CODE ?? IntegrationCommerceCodes.WEBPAY_PLUS);
+    : (process.env.WEBPAY_COMMERCE_CODE || IntegrationCommerceCodes.WEBPAY_PLUS);
 
   const apiKey = isProduction
     ? (process.env.WEBPAY_API_KEY ?? '')
-    : (process.env.WEBPAY_API_KEY ?? IntegrationApiKeys.WEBPAY);
+    : (process.env.WEBPAY_API_KEY || IntegrationApiKeys.WEBPAY);
 
   const environment = isProduction ? Environment.Production : Environment.Integration;
 
