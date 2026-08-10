@@ -38,10 +38,22 @@ const ConfirmationContent: React.FC = () => {
           Tu compra aún no ha sido confirmada. Si ya realizaste el pago, puede tardar unos minutos en reflejarse aquí.
         </p>
       )}
+      {/* Terminal statuses (rechazada, anulada, expirada, error) get their own copy:
+          telling someone whose payment was rejected to wait a few minutes is false. */}
+      {status === 'failed' && (
+        <p className="mb-8 text-muted-foreground">
+          El pago de esta compra no se completó. Puedes intentarlo nuevamente desde el inicio, o contáctanos si crees que es un error.
+        </p>
+      )}
       {status === 'loading' && (
         <p className="mb-8 text-muted-foreground">Confirmando tu compra...</p>
       )}
-      <BuyInfo courses={courses} user={user} />
+      {/* Only once the receipt has actually loaded. BuyInfo renders "Cargando..."
+          whenever courses is empty, so rendering it unconditionally put a loading
+          message directly underneath "No encontramos esta compra". */}
+      {(status === 'confirmed' || status === 'pending' || status === 'failed') && (
+        <BuyInfo courses={courses} user={user} />
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <Link
           href="/"

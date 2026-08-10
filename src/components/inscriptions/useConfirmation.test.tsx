@@ -60,7 +60,9 @@ describe('useConfirmation', () => {
   });
 
   it('sets status to pending (not confirmed) for a purchase that exists but has not settled', async () => {
-    mockReceipt({ purchase: { ...purchase, status: 'PENDING' } });
+    // isPaid: false as well as status: PENDING — a genuinely unsettled row. The two
+    // are mirrors, and isPaid alone is enough to count as settled.
+    mockReceipt({ purchase: { ...purchase, isPaid: false, status: 'PENDING' } });
     const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
 
     await waitFor(() => expect(getPurchaseReceipt).toHaveBeenCalledTimes(1));
@@ -81,15 +83,58 @@ describe('useConfirmation', () => {
     expect(result.current.user).toBeNull();
   });
 
-  it('makes no action calls at all when purchaseId is null, and stays in loading', () => {
+  it('makes no action calls when purchaseId is null, and reports not_found instead of hanging', () => {
+    // There is no id to load and none will ever arrive, so 'loading' would leave
+    // /confirmation showing "Confirmando tu compra..." forever.
     const { result } = renderHook(() => useConfirmation({ purchaseId: null }));
-    expect(result.current.status).toBe('loading');
+    expect(result.current.status).toBe('not_found');
     expect(getPurchaseReceipt).not.toHaveBeenCalled();
     expect(resendConfirmation).not.toHaveBeenCalled();
   });
 
+  it('still loads the receipt when purchaseId only arrives on a later render', async () => {
+    // The null branch must not consume the one-shot guard: search params can
+    // resolve after the first render.
+    mockReceipt();
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string | null }) => useConfirmation({ purchaseId: id }),
+      { initialProps: { id: null as string | null } },
+    );
+    expect(result.current.status).toBe('not_found');
+
+    rerender({ id: 'p1' });
+
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
+    expect(getPurchaseReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats isPaid: true with a PENDING status as confirmed', async () => {
+    // The shape a rollback window produces: the pre-hardening confirmPurchase set
+    // isPaid alone. Gating on status only would tell a payer whose card was charged
+    // that their purchase "aún no ha sido confirmada" permanently. Legacy rows
+    // predating the migration have the same shape.
+    mockReceipt({ purchase: { ...purchase, isPaid: true, status: 'PENDING' } });
+    const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+    await waitFor(() => expect(result.current.status).toBe('confirmed'));
+    expect(result.current.isMailSent).toBe(true);
+  });
+
+  it.each(['REJECTED', 'ABORTED', 'TIMEOUT', 'ERROR'])(
+    'reports a terminal %s purchase as failed, not pending',
+    async (terminalStatus) => {
+      // 'pending' copy promises the payment "puede tardar unos minutos", which is
+      // false for every one of these.
+      mockReceipt({ purchase: { ...purchase, isPaid: false, status: terminalStatus } });
+      const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
+
+      await waitFor(() => expect(result.current.status).toBe('failed'));
+      expect(result.current.isMailSent).toBe(false);
+    },
+  );
+
   it('resendEmail calls resendConfirmation with the id alone and sets isMailSent on success', async () => {
-    mockReceipt({ purchase: { ...purchase, status: 'PENDING' } });
+    mockReceipt({ purchase: { ...purchase, isPaid: false, status: 'PENDING' } });
     vi.mocked(resendConfirmation).mockResolvedValue(ok(null) as any);
     const { result } = renderHook(() => useConfirmation({ purchaseId: 'p1' }));
 

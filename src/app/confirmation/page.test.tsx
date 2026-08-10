@@ -62,6 +62,42 @@ describe('OrderConfirmation page', () => {
     expect(screen.queryByText(/Tu número de orden es/)).toBeNull();
   });
 
+  it.each(['not_found', 'loading'])(
+    'does not render BuyInfo in the %s state, where it would only say "Cargando..."',
+    (status) => {
+      // BuyInfo returns a loading message whenever courses is empty, so rendering it
+      // unconditionally put "Cargando..." directly under "No encontramos esta compra".
+      useConfirmation.mockReturnValue({
+        status, courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
+      });
+      render(<OrderConfirmation />);
+      expect(screen.queryByText('BUYINFO')).toBeNull();
+    },
+  );
+
+  it.each(['confirmed', 'pending', 'failed'])(
+    'renders BuyInfo in the %s state, where the receipt has loaded',
+    (status) => {
+      useConfirmation.mockReturnValue({
+        status, courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
+      });
+      render(<OrderConfirmation />);
+      expect(screen.getByText('BUYINFO')).toBeTruthy();
+    },
+  );
+
+  it('shows terminal-failure copy — with no "unos minutos" promise — for a failed payment', () => {
+    useConfirmation.mockReturnValue({
+      status: 'failed', courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
+    });
+    render(<OrderConfirmation />);
+    expect(screen.getByText(/El pago de esta compra no se completó/)).toBeTruthy();
+    // A rejected/aborted/expired payment will never "reflejarse aquí" in a few minutes.
+    expect(screen.queryByText(/puede tardar unos minutos/)).toBeNull();
+    expect(screen.queryByText(/aún no ha sido confirmada/)).toBeNull();
+    expect(screen.queryByText(/No encontramos esta compra/)).toBeNull();
+  });
+
   it('shows a pending message — distinct from not-found — for a purchase that exists but is not settled', () => {
     useConfirmation.mockReturnValue({
       status: 'pending', courses: [], user: null, isMailSent: false, resendEmail: vi.fn(),
