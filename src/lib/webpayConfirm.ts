@@ -45,6 +45,11 @@ export function amountsMatch(committed: number | undefined, expected: number | n
  * idempotent: only PENDING rows are touched, so a replayed abort return can never
  * downgrade a purchase that has already been paid. Returns the row id for the
  * /error redirect, or null when nothing matched.
+ *
+ * Recording a status at all is conditional on Transbank supplying TBK_ORDEN_COMPRA:
+ * buyOrder is the only key that links a tokenless callback back to a row, so when it
+ * is absent we return null without any lookup and the row simply stays PENDING. The
+ * per-case status distinction is therefore a best effort, not a guarantee.
  */
 async function failPending(
   buyOrder: string | undefined,
@@ -80,6 +85,26 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
     return { outcome: 'error', purchaseId: id ?? params.purchaseId ?? null, message: ABORT_MESSAGE };
   }
 
+  // Pre-commit idempotency guard, restoring a property the previous confirmPurchase
+  // had: never commit a token against a purchase that is already settled.
+  //
+  // createPurchase mints a FRESH Webpay transaction on every call for a retrieved
+  // unpaid row but never regenerates buyOrder, so a buyer who clicks pay, presses
+  // back, and clicks pay again holds two live tokens for one buyOrder. Committing the
+  // stale one after the other settled is a second, distinct Transbank transaction —
+  // it authorizes, and the card is charged twice.
+  //
+  // This is the ONE safe use of the client-supplied purchaseId, and the distinction is
+  // the whole point: using it to SKIP a commit can only ever result in not charging a
+  // card. It can never mark a row paid, which is the property this module defends.
+  // Using it to SELECT A ROW TO SETTLE remains forbidden — that is the vulnerability.
+  if (params.purchaseId) {
+    const claimed = await prisma.purchase.findUnique({ where: { id: params.purchaseId } });
+    if (claimed?.status === PaymentStatus.PAID) {
+      return { outcome: 'success', purchaseId: claimed.id };
+    }
+  }
+
   // Normal flow.
   const commit = (await commitWebpayTransaction(tokenWs)) as WebpayCommitResponse;
 
@@ -104,6 +129,35 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
 
   // Idempotent: a refreshed or re-POSTed return short-circuits before any write.
   if (purchase.status === PaymentStatus.PAID) {
+    // The guard above could not fire (no purchaseId on the request, or it named a
+    // different row) yet this commit authorized against an already-settled purchase:
+    // a real second capture. The money is gone from the buyer's card and there is no
+    // column to park it in — token/authorizationCode/paymentTypeCode/paidAt all hold
+    // the FIRST charge's facts, which are what a refund of that charge needs, so
+    // overwriting any of them would destroy the original record. Log everything a
+    // human needs to find and reverse it manually.
+    if (
+      isApproved(commit) &&
+      commit.authorization_code != null &&
+      commit.authorization_code !== purchase.authorizationCode
+    ) {
+      console.error(
+        'ORPHAN AUTHORIZATION: a second Webpay capture authorized against an ' +
+          'already-PAID purchase. The card was charged again. This authorization is ' +
+          'NOT stored on the row and must be refunded manually.',
+        {
+          purchaseId: purchase.id,
+          buyOrder: purchase.buyOrder,
+          settledAuthorizationCode: purchase.authorizationCode,
+          settledPaidAt: purchase.paidAt,
+          orphanAuthorizationCode: commit.authorization_code,
+          orphanPaymentTypeCode: commit.payment_type_code,
+          orphanToken: tokenWs,
+          orphanAmount: commit.amount,
+          orphanTransactionDate: commit.transaction_date,
+        },
+      );
+    }
     return { outcome: 'success', purchaseId: purchase.id };
   }
 
@@ -112,7 +166,22 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
   if (!approved || !amountOk) {
     await prisma.purchase.update({
       where: { id: purchase.id },
-      data: { status: PaymentStatus.REJECTED, token: tokenWs },
+      data: {
+        status: PaymentStatus.REJECTED,
+        token: tokenWs,
+        // When `approved` holds, the commit returned AUTHORIZED with response_code 0,
+        // so the capture HAPPENED and only the amount failed to match — reachable with
+        // no attacker at all, because createPurchase re-quotes `amount` while keeping
+        // the same buyOrder, so a still-live older token commits the old amount against
+        // a re-quoted row. These two fields are exactly what a refund needs, and this
+        // is the tamper-detection path, so it is where the audit trail matters most.
+        ...(approved
+          ? {
+              authorizationCode: commit.authorization_code ?? null,
+              paymentTypeCode: commit.payment_type_code ?? null,
+            }
+          : {}),
+      },
     });
     return {
       outcome: 'error',
@@ -188,9 +257,12 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
     // an admin instead of vanishing into a PENDING row. Best-effort: if even this
     // write fails we still return the outcome below, so the buyer is never left
     // staring at an unhandled exception on a card that was charged.
+    // updateMany with a not-PAID guard, mirroring failPending: under a concurrent
+    // duplicate return this must not stamp ERROR on a row another request just settled,
+    // which would leave isPaid: true alongside status: ERROR and break that mirror.
     try {
-      await prisma.purchase.update({
-        where: { id: purchase.id },
+      await prisma.purchase.updateMany({
+        where: { id: purchase.id, status: { not: PaymentStatus.PAID } },
         data: {
           status: PaymentStatus.ERROR,
           token: tokenWs,

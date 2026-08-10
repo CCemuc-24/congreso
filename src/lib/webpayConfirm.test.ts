@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    purchase: { findUnique: vi.fn(), update: vi.fn() },
+    purchase: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -12,11 +12,15 @@ vi.mock('@/lib/purchaseEmail', () => ({ sendPurchaseConfirmation: vi.fn() }));
 import { prisma } from '@/lib/prisma';
 import { commitWebpayTransaction } from '@/lib/webpay';
 import { sendPurchaseConfirmation } from '@/lib/purchaseEmail';
-import { confirmWebpayReturn } from './webpayConfirm';
+import { confirmWebpayReturn, isApproved, amountsMatch } from './webpayConfirm';
 import { PaymentStatus } from '@/domain/paymentStatus';
 
 const prismaMock = prisma as unknown as {
-  purchase: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+  purchase: {
+    findUnique: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
+  };
   $transaction: ReturnType<typeof vi.fn>;
 };
 const mockCommit = commitWebpayTransaction as unknown as ReturnType<typeof vi.fn>;
@@ -59,8 +63,30 @@ const AUTHORIZED = {
   transaction_date: '2026-08-10T12:00:00.000Z',
 };
 
+/**
+ * Route the two distinct lookups the module makes: the pre-commit guard reads by
+ * `{ id }`, settlement reads by `{ buyOrder }`. A single mockResolvedValue cannot tell
+ * them apart, and conflating them is how a test accidentally passes.
+ */
+function routeFindUnique(byId: unknown, byBuyOrder: unknown) {
+  prismaMock.purchase.findUnique.mockImplementation(
+    async ({ where }: { where: { id?: string; buyOrder?: string } }) =>
+      where.buyOrder !== undefined ? byBuyOrder : byId,
+  );
+}
+
+// Spied for the whole file, restored in afterEach. Restoring inline is unsafe: an
+// assertion that throws before mockRestore() leaves console.error stubbed for every
+// later test, because implementations survive vi.clearAllMocks().
+let consoleError: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  consoleError.mockRestore();
 });
 
 describe('confirmWebpayReturn — the four Transbank return flows', () => {
@@ -117,14 +143,21 @@ describe('confirmWebpayReturn — the four Transbank return flows', () => {
 
 describe('confirmWebpayReturn — verification', () => {
   it('locates the purchase by the committed buy_order, NOT by the supplied purchaseId', async () => {
-    prismaMock.purchase.findUnique.mockResolvedValue(PENDING);
+    // The hostile id resolves to a real but unrelated PENDING row, so the pre-commit
+    // skip guard cannot fire and the only question left is which row gets settled.
+    routeFindUnique({ ...PENDING, id: 'someone-elses-purchase' }, PENDING);
     mockCommit.mockResolvedValue(AUTHORIZED);
-    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx()));
+    const tx = makeTx();
+    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
 
-    // A hostile purchaseId is supplied; it must be ignored for row selection.
-    await confirmWebpayReturn({ token_ws: 'tok', purchaseId: 'someone-elses-purchase' });
+    const res = await confirmWebpayReturn({ token_ws: 'tok', purchaseId: 'someone-elses-purchase' });
 
     expect(prismaMock.purchase.findUnique).toHaveBeenCalledWith({ where: { buyOrder: BUY_ORDER } });
+    // The row actually marked paid is the buy_order row, never the supplied id.
+    expect(tx.purchase.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'p1' } }),
+    );
+    if (res.outcome === 'success') expect(res.purchaseId).toBe('p1');
   });
 
   it('rejects when the committed amount does not match the frozen quote', async () => {
@@ -133,9 +166,16 @@ describe('confirmWebpayReturn — verification', () => {
     const res = await confirmWebpayReturn({ token_ws: 'tok' });
 
     expect(res.outcome).toBe('error');
+    // The commit was AUTHORIZED with response_code 0, so the card WAS charged and only
+    // the amount failed to match. The refund facts must be kept on the rejected row.
     expect(prismaMock.purchase.update).toHaveBeenCalledWith({
       where: { id: 'p1' },
-      data: { status: PaymentStatus.REJECTED, token: 'tok' },
+      data: {
+        status: PaymentStatus.REJECTED,
+        token: 'tok',
+        authorizationCode: '123456',
+        paymentTypeCode: 'VN',
+      },
     });
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
@@ -146,6 +186,18 @@ describe('confirmWebpayReturn — verification', () => {
     const res = await confirmWebpayReturn({ token_ws: 'tok' });
     expect(res.outcome).toBe('error');
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('records no authorization facts when the commit was never approved', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue(PENDING);
+    // Not approved => no capture happened => there is nothing to refund, so writing an
+    // authorization code here would invent an audit trail for a charge that never was.
+    mockCommit.mockResolvedValue({ ...AUTHORIZED, response_code: -1 });
+    await confirmWebpayReturn({ token_ws: 'tok' });
+    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
+      where: { id: 'p1' },
+      data: { status: PaymentStatus.REJECTED, token: 'tok' },
+    });
   });
 
   it('errors without any write when the buy_order matches no purchase', async () => {
@@ -212,17 +264,15 @@ describe('confirmWebpayReturn — settlement', () => {
     // Once, not persistently: a leaked rejection would silently exercise this
     // failure path in later tests and pollute their output.
     mockEmail.mockRejectedValueOnce(new Error('smtp down'));
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const res = await confirmWebpayReturn({ token_ws: 'tok' });
 
     expect(res.outcome).toBe('success');
     // Swallowed, but not silently: an unsent receipt must leave a trace.
-    expect(logged).toHaveBeenCalledWith(
+    expect(consoleError).toHaveBeenCalledWith(
       'purchase confirmation email failed',
       expect.objectContaining({ message: 'smtp down' }),
     );
-    logged.mockRestore();
   });
 
   it('records the charge as ERROR when the card was charged but a purchased course is full', async () => {
@@ -240,9 +290,10 @@ describe('confirmWebpayReturn — settlement', () => {
 
     expect(res.outcome).toBe('error');
     // The money left the card. The payment facts must survive the rollback so an
-    // admin can find and refund it.
-    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
-      where: { id: 'p1' },
+    // admin can find and refund it. Guarded on not-PAID so a concurrent duplicate
+    // return cannot stamp ERROR over a row another request just settled.
+    expect(prismaMock.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: { not: PaymentStatus.PAID } },
       data: {
         status: PaymentStatus.ERROR,
         token: 'tok',
@@ -268,5 +319,170 @@ describe('confirmWebpayReturn — settlement', () => {
 
     expect(res.outcome).toBe('success');
     expect(tx.enrollment.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('confirmWebpayReturn — pre-commit idempotency guard', () => {
+  // createPurchase mints a fresh token per attempt but never regenerates buyOrder, so a
+  // back-button retry leaves two live tokens for one row. Committing the stale one after
+  // the row is settled charges the card a second time.
+  it('skips the commit entirely when the supplied purchaseId is already PAID', async () => {
+    routeFindUnique({ ...PENDING, status: PaymentStatus.PAID, isPaid: true }, PENDING);
+
+    const res = await confirmWebpayReturn({ token_ws: 'stale-token', purchaseId: 'p1' });
+
+    expect(res.outcome).toBe('success');
+    if (res.outcome === 'success') expect(res.purchaseId).toBe('p1');
+    // The whole point: no second capture.
+    expect(mockCommit).not.toHaveBeenCalled();
+    expect(prismaMock.purchase.update).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('proceeds to commit normally when the supplied purchaseId is not PAID', async () => {
+    routeFindUnique(PENDING, PENDING);
+    mockCommit.mockResolvedValue(AUTHORIZED);
+    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx()));
+
+    const res = await confirmWebpayReturn({ token_ws: 'tok', purchaseId: 'p1' });
+
+    expect(res.outcome).toBe('success');
+    expect(mockCommit).toHaveBeenCalledWith('tok');
+  });
+
+  it('proceeds to commit normally when no purchaseId is supplied at all', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue(PENDING);
+    mockCommit.mockResolvedValue(AUTHORIZED);
+    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx()));
+
+    const res = await confirmWebpayReturn({ token_ws: 'tok' });
+
+    expect(res.outcome).toBe('success');
+    expect(mockCommit).toHaveBeenCalledWith('tok');
+    // No id lookup happened — only the buy_order one.
+    expect(prismaMock.purchase.findUnique).toHaveBeenCalledTimes(1);
+    expect(prismaMock.purchase.findUnique).toHaveBeenCalledWith({ where: { buyOrder: BUY_ORDER } });
+  });
+
+  it('does not skip when the purchaseId names a different, unpaid row', async () => {
+    routeFindUnique({ ...PENDING, id: 'other', status: PaymentStatus.ABORTED }, PENDING);
+    mockCommit.mockResolvedValue(AUTHORIZED);
+    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx()));
+
+    await confirmWebpayReturn({ token_ws: 'tok', purchaseId: 'other' });
+
+    expect(mockCommit).toHaveBeenCalled();
+  });
+});
+
+describe('confirmWebpayReturn — orphan authorization on an already-settled purchase', () => {
+  const SETTLED = {
+    ...PENDING,
+    status: PaymentStatus.PAID,
+    isPaid: true,
+    authorizationCode: 'FIRST-999',
+    paidAt: new Date('2026-08-09T10:00:00.000Z'),
+  };
+
+  it('logs the orphan authorization without touching the first charge record', async () => {
+    // No purchaseId, so the pre-commit guard cannot fire; the commit lands on a row that
+    // is already PAID with a DIFFERENT authorization code => a genuine second capture.
+    prismaMock.purchase.findUnique.mockResolvedValue(SETTLED);
+    mockCommit.mockResolvedValue(AUTHORIZED); // authorization_code '123456'
+
+    const res = await confirmWebpayReturn({ token_ws: 'second-token' });
+
+    expect(res.outcome).toBe('success');
+    // The original authorizationCode/paidAt must survive: they are what a refund of the
+    // FIRST charge needs. No column can hold the orphan, so nothing is written at all.
+    expect(prismaMock.purchase.update).not.toHaveBeenCalled();
+    expect(prismaMock.purchase.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('ORPHAN AUTHORIZATION'),
+      expect.objectContaining({
+        purchaseId: 'p1',
+        buyOrder: BUY_ORDER,
+        settledAuthorizationCode: 'FIRST-999',
+        orphanAuthorizationCode: '123456',
+        orphanToken: 'second-token',
+        orphanAmount: 25900,
+      }),
+    );
+  });
+
+  it('stays silent on a true replay, where the authorization code is the same', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue({ ...SETTLED, authorizationCode: '123456' });
+    mockCommit.mockResolvedValue(AUTHORIZED);
+
+    const res = await confirmWebpayReturn({ token_ws: 'tok' });
+
+    expect(res.outcome).toBe('success');
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('stays silent when the replayed commit was not approved', async () => {
+    prismaMock.purchase.findUnique.mockResolvedValue(SETTLED);
+    // Not approved => no second capture => nothing orphaned.
+    mockCommit.mockResolvedValue({ ...AUTHORIZED, response_code: -1 });
+
+    const res = await confirmWebpayReturn({ token_ws: 'tok' });
+
+    expect(res.outcome).toBe('success');
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+});
+
+describe('isApproved', () => {
+  const base = { status: 'AUTHORIZED', response_code: 0 };
+
+  it('requires both AUTHORIZED and response_code 0', () => {
+    expect(isApproved(base)).toBe(true);
+  });
+
+  it('fails closed on a non-zero response_code', () => {
+    expect(isApproved({ ...base, response_code: -1 })).toBe(false);
+    expect(isApproved({ ...base, response_code: 1 })).toBe(false);
+  });
+
+  it('fails closed on any status other than AUTHORIZED', () => {
+    expect(isApproved({ ...base, status: 'FAILED' })).toBe(false);
+    expect(isApproved({ ...base, status: 'REVERSED' })).toBe(false);
+  });
+
+  it('fails closed when either field is missing', () => {
+    expect(isApproved({ status: 'AUTHORIZED' })).toBe(false);
+    expect(isApproved({ response_code: 0 })).toBe(false);
+    expect(isApproved({})).toBe(false);
+  });
+});
+
+describe('amountsMatch', () => {
+  it('matches equal integer CLP amounts', () => {
+    expect(amountsMatch(25900, 25900)).toBe(true);
+    expect(amountsMatch(0, 0)).toBe(true);
+  });
+
+  it('rejects any difference, including one peso', () => {
+    expect(amountsMatch(25899, 25900)).toBe(false);
+    expect(amountsMatch(50, 25900)).toBe(false);
+  });
+
+  it('fails closed on a null expected amount, as legacy rows have', () => {
+    // Purchase.amount is nullable: rows created before the amount was frozen carry
+    // null, and those must never be settleable by an unverifiable amount.
+    expect(amountsMatch(25900, null)).toBe(false);
+  });
+
+  it('fails closed on an undefined committed amount', () => {
+    expect(amountsMatch(undefined, 25900)).toBe(false);
+    expect(amountsMatch(undefined, null)).toBe(false);
+  });
+
+  it('fails closed on NaN from either side', () => {
+    expect(amountsMatch(NaN, 25900)).toBe(false);
+    expect(amountsMatch(25900, NaN)).toBe(false);
+    expect(amountsMatch(NaN, NaN)).toBe(false);
   });
 });
