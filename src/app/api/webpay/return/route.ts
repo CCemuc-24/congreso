@@ -16,16 +16,26 @@ import { confirmWebpayReturn, type ConfirmOutcome } from '@/lib/webpayConfirm';
 
 const FALLBACK_MESSAGE = 'Error en la compra';
 
-// Fall back to the request origin when NEXT_PUBLIC_BASE_URL is unset OR malformed,
-// so the live Webpay return never 500s on `new URL('/confirmation', base)`. Validating
-// here — rather than merely catching at the call sites — makes a bad base URL
-// impossible to propagate: every downstream `new URL(path, base)` call is guaranteed
-// a value that already parsed successfully once.
+// Only http(s) may serve as the base for the redirects below. Parsing `configured`
+// standalone is NOT sufficient: opaque-path schemes such as javascript:, data:,
+// mailto:, and tel: all parse fine on their own yet throw when later used as a base
+// in `new URL(path, base)` — the exact two-argument form `redirect()` performs. An
+// explicit allowlist validates the property that actually matters ("can this serve
+// as a base for our two known paths") and, as a bonus, guarantees we never hand a
+// browser a Location header it can't sensibly navigate to.
+const ALLOWED_BASE_PROTOCOLS = new Set(['http:', 'https:']);
+
+// Fall back to the request origin when NEXT_PUBLIC_BASE_URL is unset, malformed, or
+// not an http(s) URL, so the live Webpay return never 500s on
+// `new URL('/confirmation', base)`. Validating here — rather than merely catching at
+// the call sites — makes a bad base URL impossible to propagate: every downstream
+// `new URL(path, base)` call is guaranteed a value already proven to work as a base.
 function baseUrl(req: NextRequest): string {
   const configured = process.env.NEXT_PUBLIC_BASE_URL;
   if (!configured) return req.nextUrl.origin;
   try {
-    new URL(configured);
+    const parsed = new URL(configured);
+    if (!ALLOWED_BASE_PROTOCOLS.has(parsed.protocol)) return req.nextUrl.origin;
     return configured;
   } catch {
     return req.nextUrl.origin;

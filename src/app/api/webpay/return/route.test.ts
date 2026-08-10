@@ -137,6 +137,58 @@ describe('Webpay return Route Handler', () => {
     expect(loc.searchParams.get('purchaseId')).toBe('pur-9');
   });
 
+  it('falls back to the request origin when NEXT_PUBLIC_BASE_URL is an opaque-path scheme (javascript:, success outcome)', async () => {
+    process.env.NEXT_PUBLIC_BASE_URL = 'javascript:alert(1)';
+    mockConfirm.mockResolvedValue({ outcome: 'success', purchaseId: 'pur-11' });
+    const origin = 'https://request-origin.example';
+    const res = await POST(postReq(`${origin}/api/webpay/return`, { token_ws: 'tok' }));
+
+    expect(res.status).toBe(303);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(origin);
+    expect(loc.pathname).toBe('/confirmation');
+    expect(loc.searchParams.get('purchaseId')).toBe('pur-11');
+  });
+
+  it('falls back to the request origin when NEXT_PUBLIC_BASE_URL is an opaque-path scheme (javascript:, error outcome)', async () => {
+    process.env.NEXT_PUBLIC_BASE_URL = 'javascript:alert(1)';
+    mockConfirm.mockResolvedValue({ outcome: 'error', purchaseId: 'pur-12', message: 'Error en la compra' });
+    const origin = 'https://request-origin.example';
+    const res = await POST(postReq(`${origin}/api/webpay/return`, { token_ws: 'tok' }));
+
+    expect(res.status).toBe(303);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(origin);
+    expect(loc.pathname).toBe('/error');
+    expect(loc.searchParams.get('purchaseId')).toBe('pur-12');
+  });
+
+  it('falls back to the request origin when NEXT_PUBLIC_BASE_URL is an opaque-path scheme (data:, success outcome)', async () => {
+    process.env.NEXT_PUBLIC_BASE_URL = 'data:text/plain,hello';
+    mockConfirm.mockResolvedValue({ outcome: 'success', purchaseId: 'pur-13' });
+    const origin = 'https://request-origin.example';
+    const res = await POST(postReq(`${origin}/api/webpay/return`, { token_ws: 'tok' }));
+
+    expect(res.status).toBe(303);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(origin);
+    expect(loc.pathname).toBe('/confirmation');
+    expect(loc.searchParams.get('purchaseId')).toBe('pur-13');
+  });
+
+  it('falls back to the request origin when NEXT_PUBLIC_BASE_URL is an opaque-path scheme (data:, error outcome)', async () => {
+    process.env.NEXT_PUBLIC_BASE_URL = 'data:text/plain,hello';
+    mockConfirm.mockResolvedValue({ outcome: 'error', purchaseId: 'pur-14', message: 'Error en la compra' });
+    const origin = 'https://request-origin.example';
+    const res = await POST(postReq(`${origin}/api/webpay/return`, { token_ws: 'tok' }));
+
+    expect(res.status).toBe(303);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(origin);
+    expect(loc.pathname).toBe('/error');
+    expect(loc.searchParams.get('purchaseId')).toBe('pur-14');
+  });
+
   it('lets the form value win when an attacker shadows token_ws on the query string', async () => {
     mockConfirm.mockResolvedValue({ outcome: 'success', purchaseId: 'pur-10' });
     // Query carries an attacker-supplied token_ws (our own returnUrl never puts one
