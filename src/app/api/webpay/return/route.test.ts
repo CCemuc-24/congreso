@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 vi.mock('@/lib/webpayConfirm', () => ({ confirmWebpayReturn: vi.fn() }));
@@ -17,9 +17,19 @@ function postReq(url: string, form: Record<string, string>): NextRequest {
   });
 }
 
+// Spied for the whole file, restored in afterEach — not inline — because a throwing
+// assertion would otherwise leave console.error stubbed for every later test.
+// Mirrors the convention established in src/lib/webpayConfirm.test.ts.
+let consoleError: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.NEXT_PUBLIC_BASE_URL = BASE;
+  consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  consoleError.mockRestore();
 });
 
 describe('Webpay return Route Handler', () => {
@@ -70,8 +80,9 @@ describe('Webpay return Route Handler', () => {
     expect(loc.searchParams.has('purchaseId')).toBe(false);
   });
 
-  it('redirects to /error instead of throwing when confirmation blows up', async () => {
-    mockConfirm.mockRejectedValue(new Error('db offline'));
+  it('redirects to /error instead of throwing when confirmation blows up, and logs why', async () => {
+    const thrown = new Error('db offline');
+    mockConfirm.mockRejectedValue(thrown);
     const res = await POST(postReq(`${BASE}/api/webpay/return?purchaseId=pur-3`, { token_ws: 'tok' }));
 
     expect(res.status).toBe(303);
@@ -79,6 +90,8 @@ describe('Webpay return Route Handler', () => {
     expect(loc.pathname).toBe('/error');
     expect(loc.searchParams.get('message')).toBe('Error en la compra');
     expect(loc.searchParams.get('purchaseId')).toBe('pur-3');
+    // Pin the log-and-degrade behavior instead of merely muting its stderr output.
+    expect(consoleError).toHaveBeenCalledWith('Webpay return processing failed', thrown);
   });
 
   it('handles the GET return path, reading params from the query string', async () => {
@@ -96,5 +109,46 @@ describe('Webpay return Route Handler', () => {
     const res = await POST(postReq(`${origin}/api/webpay/return`, { token_ws: 'tok' }));
 
     expect(new URL(res.headers.get('location')!).origin).toBe(origin);
+  });
+
+  it('falls back to the request origin when NEXT_PUBLIC_BASE_URL is malformed (success outcome)', async () => {
+    process.env.NEXT_PUBLIC_BASE_URL = 'not a valid url';
+    mockConfirm.mockResolvedValue({ outcome: 'success', purchaseId: 'pur-8' });
+    const origin = 'https://request-origin.example';
+    const res = await POST(postReq(`${origin}/api/webpay/return`, { token_ws: 'tok' }));
+
+    expect(res.status).toBe(303);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(origin);
+    expect(loc.pathname).toBe('/confirmation');
+    expect(loc.searchParams.get('purchaseId')).toBe('pur-8');
+  });
+
+  it('falls back to the request origin when NEXT_PUBLIC_BASE_URL is malformed (error outcome)', async () => {
+    process.env.NEXT_PUBLIC_BASE_URL = 'not a valid url';
+    mockConfirm.mockResolvedValue({ outcome: 'error', purchaseId: 'pur-9', message: 'Error en la compra' });
+    const origin = 'https://request-origin.example';
+    const res = await POST(postReq(`${origin}/api/webpay/return`, { token_ws: 'tok' }));
+
+    expect(res.status).toBe(303);
+    const loc = new URL(res.headers.get('location')!);
+    expect(loc.origin).toBe(origin);
+    expect(loc.pathname).toBe('/error');
+    expect(loc.searchParams.get('purchaseId')).toBe('pur-9');
+  });
+
+  it('lets the form value win when an attacker shadows token_ws on the query string', async () => {
+    mockConfirm.mockResolvedValue({ outcome: 'success', purchaseId: 'pur-10' });
+    // Query carries an attacker-supplied token_ws (our own returnUrl never puts one
+    // there, but nothing stops a crafted URL from adding it); the form body carries
+    // Transbank's real token. The merge order must let the form win.
+    const req = postReq(`${BASE}/api/webpay/return?token_ws=attacker-supplied`, {
+      token_ws: 'real-transbank-token',
+    });
+    await POST(req);
+
+    expect(mockConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ token_ws: 'real-transbank-token' }),
+    );
   });
 });

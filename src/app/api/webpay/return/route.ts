@@ -16,10 +16,20 @@ import { confirmWebpayReturn, type ConfirmOutcome } from '@/lib/webpayConfirm';
 
 const FALLBACK_MESSAGE = 'Error en la compra';
 
-// Fall back to the request origin when NEXT_PUBLIC_BASE_URL is unset, so the
-// live Webpay return never 500s on `new URL('/confirmation', '')`.
+// Fall back to the request origin when NEXT_PUBLIC_BASE_URL is unset OR malformed,
+// so the live Webpay return never 500s on `new URL('/confirmation', base)`. Validating
+// here — rather than merely catching at the call sites — makes a bad base URL
+// impossible to propagate: every downstream `new URL(path, base)` call is guaranteed
+// a value that already parsed successfully once.
 function baseUrl(req: NextRequest): string {
-  return process.env.NEXT_PUBLIC_BASE_URL || req.nextUrl.origin;
+  const configured = process.env.NEXT_PUBLIC_BASE_URL;
+  if (!configured) return req.nextUrl.origin;
+  try {
+    new URL(configured);
+    return configured;
+  } catch {
+    return req.nextUrl.origin;
+  }
 }
 
 // 303 See Other so the browser turns Transbank's cross-site POST into a
