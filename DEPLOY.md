@@ -7,6 +7,31 @@
 
 ---
 
+## ⚠️ Deploy the Webpay-hardening branch as a whole
+
+The `feat/transbank-hardening` branch changes the Webpay Plus payment flow across
+several interdependent commits: the transaction **commit** moves server-side into
+`/api/webpay/return` (locating the purchase by the `buy_order` Transbank echoes
+back, never by a client-supplied id), the committed **amount is verified** against
+a quote frozen before redirect, and `/confirmation` becomes **read-only** — it no
+longer commits anything itself and no longer receives `token_ws`. The old
+client-callable `confirmPurchase` action is gone entirely; `/confirmation` now
+reads state through `getPurchaseReceipt` instead.
+
+**These pieces only work together.** Deploying a partial slice of this branch —
+for example, the server-side commit route without the read-only confirmation page,
+or vice versa — leaves a real failure mode: a payer's card is charged and the
+purchase is committed successfully on the server, but the confirmation page the
+browser lands on either errors out or is looking for a `token_ws` that will never
+arrive. The purchase is **settled** but the payer sees a **broken confirmation**,
+with no way to tell from the UI that they were actually charged.
+
+**Deploy this branch as a single atomic release.** Do not cherry-pick individual
+commits from it into production, and do not deploy it partially across multiple
+releases.
+
+---
+
 ## Task 47 — Vercel Project & Build Config
 
 ### 1. Connect the repository
@@ -29,18 +54,40 @@
 `app/package.json` runs `prisma generate`, so Vercel's install step triggers it
 without any extra configuration.
 
-### 3. Database migration (run once per schema change)
+### 3. Database migration (runs automatically on every build)
 
-Prisma migrations are **not** run automatically by the build. After deploying a
-schema change, execute the migration against the live Neon DB:
+Prisma migrations **are** run automatically by the build. The `vercel-build`
+script in `package.json` is:
 
 ```bash
-# From a machine with DATABASE_URL / DIRECT_URL set (or via Vercel CLI):
-npx prisma migrate deploy
+prisma generate && (export DATABASE_URL="${DATABASE_URL:-${CCEM_POSTGRES_PRISMA_URL:-$CCEM_DATABASE_URL}}" DIRECT_URL="${DIRECT_URL:-${CCEM_DATABASE_URL_UNPOOLED:-$CCEM_POSTGRES_URL_NON_POOLING}}" && prisma migrate deploy && tsx prisma/seed.ts || echo 'WARN: prisma migrate/seed skipped — check Vercel DB env vars') && next build
 ```
 
-Or add a Vercel Build hook / GitHub Action that runs `prisma migrate deploy`
-before the production build using the `DIRECT_URL` connection.
+So `prisma migrate deploy` (and the seed script) run on every Vercel build,
+resolving `DATABASE_URL`/`DIRECT_URL` from either the plain names or the
+Neon-Vercel integration's `CCEM_`-prefixed equivalents.
+
+> **⚠️ This step silently swallows failures.** The `&&` chain is wrapped in
+> `(... || echo 'WARN: ...')`, so if `prisma migrate deploy` or the seed script
+> fails — for example a `CREATE UNIQUE INDEX` that can't apply because of
+> existing duplicate data — the build does **not** fail. It prints a `WARN:`
+> line to the build log and proceeds straight to `next build`, which can
+> succeed and deploy even though the migration never ran.
+>
+> **After every deploy that includes a new migration, open the Vercel build
+> log and search for `WARN`.** A clean-looking green deployment is not
+> sufficient evidence the migration applied — grep the log explicitly:
+>
+> ```bash
+> vercel inspect --logs <deployment-url> | grep WARN
+> ```
+>
+> If you cannot rule out a swallowed failure from the log, re-run the migration
+> by hand from a machine with `DATABASE_URL` / `DIRECT_URL` set:
+>
+> ```bash
+> npx prisma migrate deploy
+> ```
 
 ### 4. Re-deployments
 
@@ -103,14 +150,19 @@ Run after the first production deploy with all env vars set.
 
 ### Public purchase flow (happy path)
 
+The flow is: `/pricing` → `/form` → Webpay's hosted payment page →
+`/api/webpay/return` (the transaction is **committed here**, server-side, by
+`buy_order`) → `/confirmation` (**read-only** — it does not commit anything and
+does not receive `token_ws`) or `/error`.
+
 - [ ] **`/modules`** — page loads, all course modules render correctly with Spanish copy intact
 - [ ] **`/pricing`** — course selection UI appears (not "No disponible"); price totals calculate correctly
 - [ ] **`/form`** — registration form submits without errors; RUT validation accepts a valid RUT and rejects an invalid one
 - [ ] **Webpay redirect** — clicking pay redirects to Transbank's production payment page (not the integration sandbox)
-- [ ] **Complete payment** — use a real test card or perform a small live transaction; Transbank redirects back to `/api/webpay/return`
-- [ ] **`/confirmation`** — page shows "Confirmación de pago" with correct purchase details; no errors in browser console
+- [ ] **Complete payment** — use a real test card or perform a small live transaction; Transbank POSTs back to `/api/webpay/return`, which commits the transaction and 303-redirects the browser
+- [ ] **`/confirmation`** — lands on `/confirmation?purchaseId=<uuid>` with **no `token_ws` in the URL**; page shows "Confirmación de pago" with correct purchase details; no errors in browser console
 - [ ] **Confirmation email** — target email inbox receives the confirmation email from `EMAIL_FROM` with correct course list
-- [ ] **`/error`** — navigate to `/error?message=test` to confirm the error page renders; simulate an aborted Webpay flow to confirm the abort redirect works
+- [ ] **`/error`** — navigate to `/error?message=test` to confirm the error page renders; simulate an aborted Webpay flow (press "Anular compra" on Transbank's form) to confirm it redirects to `/error?message=...&purchaseId=...` and the purchase is recorded as `ABORTED`, not merely "not paid"
 
 ### Admin smoke test (via the Route Handler)
 
