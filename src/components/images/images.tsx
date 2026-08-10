@@ -1,4 +1,4 @@
-import generalImage from '@/components/images/cards/general-cirugia-innovacion.png';
+import generalImage from '@/components/images/cards/general-cirugia-pacientes-complejos.png';
 import moduloVascular from '@/components/images/cards/modulo-cirugia-vascular.png';
 import moduloDigestivaColoproctologia from '@/components/images/cards/modulo-cirugia-digestiva-coloproctologia.png';
 import moduloGinecologiaObstetricia from '@/components/images/cards/modulo-ginecologia-obstetricia.png';

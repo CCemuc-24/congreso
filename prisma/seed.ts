@@ -24,7 +24,7 @@ type SeedCourse = {
 // one synchronous module, so the ticket price rides on that module; the general
 // module and the workshops are $0 (included). Capacities: workshops 20
 // (tentative), modules generous. Topics/horarios pending from the committee.
-const TICKET_PRICE = 25900;
+const TICKET_PRICE = 23000;
 const GENERAL_FEATURES = {
   Modalidad: 'Clases magistrales presenciales',
   Lugar: 'Campus Casa Central. Auditorio por definir.',

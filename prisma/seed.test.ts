@@ -36,14 +36,14 @@ describe('seedCourses', () => {
     expect(general.title).toBe('Módulo General: Cirugía en pacientes complejos');
     expect(general.week).toBe(0);
 
-    // The three synchronous modules a student chooses between — the $25.900
+    // The three synchronous modules a student chooses between — the $23.000
     // ticket price rides on the chosen module.
     const titles = client.created.map((c) => c.title);
     expect(titles).toContain('Módulo: Ginecología y Obstetricia');
     expect(titles).toContain('Módulo: Cirugía Digestiva y Coloproctología');
     expect(titles).toContain('Módulo: Cirugía Vascular');
     const electives = client.created.filter((c) => c.type === CourseType.elective);
-    expect(electives.every((m) => m.price === 25900)).toBe(true);
+    expect(electives.every((m) => m.price === 23000)).toBe(true);
 
     // Workshops are capacity-limited (20) and presential on 24/10
     const workshops = client.created.filter((c) => c.type === CourseType.workshop);

@@ -11,7 +11,7 @@ import type { Course } from '@/actions/courses';
 import { SectionHeading } from '@/components/luz/SectionHeading';
 import { cn } from '@/lib/utils';
 
-const TICKET_PRICE = '$25.900';
+const TICKET_PRICE = '$23.000';
 const WORKSHOPS_REQUIRED = 2;
 
 const PricingClient: React.FC<{ registrationOpen: boolean }> = ({ registrationOpen }) => {
