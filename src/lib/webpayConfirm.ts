@@ -98,8 +98,17 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
   // the whole point: using it to SKIP a commit can only ever result in not charging a
   // card. It can never mark a row paid, which is the property this module defends.
   // Using it to SELECT A ROW TO SETTLE remains forbidden — that is the vulnerability.
+  //
+  // .catch(() => null) is load-bearing, not defensive noise: Purchase.id is @db.Uuid and
+  // purchaseId arrives raw from the return POST (webpayReturnParams only collapses '' to
+  // undefined), so any non-UUID reaches Prisma and throws P2023. An uncaught throw here
+  // would abort before the commit and strand a legitimate payment that would otherwise
+  // have settled via buy_order. This guard is an optimization; it must never be able to
+  // PREVENT a settlement. A malformed or unknown id simply means "no claim found".
   if (params.purchaseId) {
-    const claimed = await prisma.purchase.findUnique({ where: { id: params.purchaseId } });
+    const claimed = await prisma.purchase
+      .findUnique({ where: { id: params.purchaseId } })
+      .catch(() => null);
     if (claimed?.status === PaymentStatus.PAID) {
       return { outcome: 'success', purchaseId: claimed.id };
     }
@@ -164,8 +173,14 @@ export async function confirmWebpayReturn(params: WebpayReturnParams): Promise<C
   const approved = isApproved(commit);
   const amountOk = amountsMatch(commit.amount, purchase.amount);
   if (!approved || !amountOk) {
-    await prisma.purchase.update({
-      where: { id: purchase.id },
+    // Guarded on not-PAID for the same reason as the rollback-recovery write below, and
+    // it matters more here: two live tokens for one buyOrder against a re-quoted amount
+    // can both pass the PAID check above before either writes. Losing that race with a
+    // bare update would overwrite the winner's authorizationCode/paymentTypeCode with
+    // this second transaction's values, destroying the settled charge's refund facts —
+    // exactly the harm the orphan-authorization branch above exists to prevent.
+    await prisma.purchase.updateMany({
+      where: { id: purchase.id, status: { not: PaymentStatus.PAID } },
       data: {
         status: PaymentStatus.REJECTED,
         token: tokenWs,

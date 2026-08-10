@@ -167,9 +167,10 @@ describe('confirmWebpayReturn — verification', () => {
 
     expect(res.outcome).toBe('error');
     // The commit was AUTHORIZED with response_code 0, so the card WAS charged and only
-    // the amount failed to match. The refund facts must be kept on the rejected row.
-    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
-      where: { id: 'p1' },
+    // the amount failed to match. The refund facts must be kept on the rejected row, and
+    // the not-PAID guard must stop a lost race from clobbering a settled row's facts.
+    expect(prismaMock.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: { not: PaymentStatus.PAID } },
       data: {
         status: PaymentStatus.REJECTED,
         token: 'tok',
@@ -194,8 +195,8 @@ describe('confirmWebpayReturn — verification', () => {
     // authorization code here would invent an audit trail for a charge that never was.
     mockCommit.mockResolvedValue({ ...AUTHORIZED, response_code: -1 });
     await confirmWebpayReturn({ token_ws: 'tok' });
-    expect(prismaMock.purchase.update).toHaveBeenCalledWith({
-      where: { id: 'p1' },
+    expect(prismaMock.purchase.updateMany).toHaveBeenCalledWith({
+      where: { id: 'p1', status: { not: PaymentStatus.PAID } },
       data: { status: PaymentStatus.REJECTED, token: 'tok' },
     });
   });
@@ -210,6 +211,10 @@ describe('confirmWebpayReturn — verification', () => {
   });
 
   it('returns error when the SDK commit itself fails', async () => {
+    // Explicit rather than inherited: this test passes a purchaseId, so the skip guard
+    // queries. Relying on a previous test's leaked implementation would make it
+    // order-dependent — the leak class flagged twice in review.
+    prismaMock.purchase.findUnique.mockResolvedValue(null);
     mockCommit.mockResolvedValue({ status: 'ERROR', error: 'boom' });
     const res = await confirmWebpayReturn({ token_ws: 'tok', purchaseId: 'pur-9' });
     expect(res.outcome).toBe('error');
@@ -362,6 +367,33 @@ describe('confirmWebpayReturn — pre-commit idempotency guard', () => {
     // No id lookup happened — only the buy_order one.
     expect(prismaMock.purchase.findUnique).toHaveBeenCalledTimes(1);
     expect(prismaMock.purchase.findUnique).toHaveBeenCalledWith({ where: { buyOrder: BUY_ORDER } });
+  });
+
+  it('still settles by buy_order when the purchaseId is malformed and Prisma throws', async () => {
+    // Purchase.id is @db.Uuid and purchaseId arrives raw from the return POST, so a
+    // non-UUID reaches Prisma and throws P2023. That throw happens BEFORE the commit, so
+    // without a .catch it would abort a legitimate payment that should have settled.
+    prismaMock.purchase.findUnique.mockImplementation(
+      async ({ where }: { where: { id?: string; buyOrder?: string } }) => {
+        if (where.buyOrder !== undefined) return PENDING;
+        throw Object.assign(new Error('Inconsistent column data: Malformed UUID'), {
+          code: 'P2023',
+        });
+      },
+    );
+    mockCommit.mockResolvedValue(AUTHORIZED);
+    const tx = makeTx();
+    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx));
+
+    const res = await confirmWebpayReturn({ token_ws: 'tok', purchaseId: 'not-a-uuid' });
+
+    // The skip guard is an optimization; it must never PREVENT a real settlement.
+    expect(res.outcome).toBe('success');
+    if (res.outcome === 'success') expect(res.purchaseId).toBe('p1');
+    expect(mockCommit).toHaveBeenCalledWith('tok');
+    expect(tx.purchase.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'p1' } }),
+    );
   });
 
   it('does not skip when the purchaseId names a different, unpaid row', async () => {
