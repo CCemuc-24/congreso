@@ -18,8 +18,22 @@ const spaceMono = Space_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://www.ccem.cl'),
   title: 'CCEM UC',
   description: 'II° Congreso de Cirugía UC para Estudiantes de Medicina',
+  openGraph: {
+    title: 'CCEM UC',
+    description: 'II° Congreso de Cirugía UC para Estudiantes de Medicina',
+    url: '/',
+    siteName: 'CCEM UC',
+    locale: 'es_CL',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'CCEM UC',
+    description: 'II° Congreso de Cirugía UC para Estudiantes de Medicina',
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
