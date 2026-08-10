@@ -30,6 +30,50 @@ with no way to tell from the UI that they were actually charged.
 commits from it into production, and do not deploy it partially across multiple
 releases.
 
+### ⚠️ If you roll this branch back, repair the data before rolling forward again
+
+`Purchase.isPaid` and `Purchase.status` are mirrors of each other, but only the
+code on this branch writes **both**. The old `confirmPurchase` sets `isPaid: true`
+alone. So this exact sequence leaves damaged rows:
+
+1. This branch is deployed to production.
+2. It is reverted (rolled back to the previous release).
+3. **A payment settles during that rollback window** — the old code marks it
+   `isPaid: true` and leaves `status` at its default `'PENDING'`.
+
+Those rows are wrong in two ways once you roll forward again:
+`createPurchase`'s create-or-retrieve `findFirst` filters on `isPaid: false`, so it
+will never select them for repair, and until the fix in
+`useConfirmation.ts` shipped they would have shown the payer
+"aún no ha sido confirmada" forever. (`/confirmation` now treats `isPaid` **or**
+`status = 'PAID'` as settled, so the payer sees a correct receipt either way — but
+the `status` column, the `@@index([status])`, and every report built on it stay
+wrong until repaired.)
+
+**This applies only if all three of the above happened.** If the branch was never
+reverted, or no payment settled during the window, there is nothing to repair.
+
+Run this **before** rolling forward, from a machine with `DIRECT_URL` set:
+
+```bash
+set -a; . ./.env; set +a
+# 1. Look first — expect zero rows if no payment settled during the rollback window:
+npx prisma db execute --url "$DIRECT_URL" --stdin <<'SQL'
+SELECT id, "userId", amount, "updatedAt" FROM "Purchase"
+WHERE "isPaid" AND status = 'PENDING';
+SQL
+
+# 2. Repair. updatedAt is the closest available stand-in for the settlement time:
+#    the old code's write is the last thing that touched the row.
+npx prisma db execute --url "$DIRECT_URL" --stdin <<'SQL'
+UPDATE "Purchase" SET status='PAID', "paidAt"="updatedAt" WHERE "isPaid" AND status='PENDING';
+SQL
+```
+
+The repaired rows will have no `token`, `authorizationCode`, or `paymentTypeCode`
+— the old code never recorded them. Reconcile those against the Transbank portal
+by hand if a refund is ever needed for one of them.
+
 ---
 
 ## Task 47 — Vercel Project & Build Config
@@ -183,8 +227,41 @@ curl -s -o /dev/null -w "%{http_code}" \
 ### Checks after smoke test
 
 - [ ] No `console.error` output in Vercel function logs (Vercel dashboard → Deployments → Functions)
-- [ ] Database has a new `Purchase` row with `isPaid = true`
+- [ ] Database has a new `Purchase` row with `isPaid = true` **and** `status = 'PAID'`
 - [ ] Enrolled courses show decremented `capacity` in DB
+
+### ⚠️ Recurring check: grep the logs for charged-but-unsettled payments
+
+Two conditions are detected **only** by a `console.error` in
+`src/lib/webpayConfirm.ts`. Nothing else surfaces them — no email, no admin
+screen, no database column — so if nobody greps the logs, nobody ever finds out.
+Both mean **a card was charged and the buyer did not get what they paid for**, and
+both need a human to reverse or complete the transaction manually.
+
+```bash
+# A second Webpay capture authorized against an already-PAID purchase. The card was
+# charged twice; the second authorization is deliberately NOT stored on the row
+# (overwriting the first charge's facts would destroy what a refund of it needs), so
+# the log line is the ONLY record of it. Refund manually.
+vercel inspect --logs <deployment-url> | grep 'ORPHAN AUTHORIZATION'
+
+# The commit was approved and the amount verified, but the settlement transaction
+# rolled back (a full course, or a database error). The row is marked ERROR with the
+# payment facts attached; the buyer was shown a fixed Spanish message. Complete the
+# enrolment or refund.
+vercel inspect --logs <deployment-url> | grep 'webpay settlement failed'
+```
+
+Both markers can also be found under a status query, which is the more reliable
+check because it does not depend on log retention:
+
+```sql
+SELECT id, "userId", amount, "authorizationCode", "updatedAt"
+FROM "Purchase" WHERE status = 'ERROR';
+```
+
+(The orphan-authorization case is the exception: it has **no** row of its own — the
+purchase stays `PAID` — so only the log line records it.)
 
 ---
 
