@@ -15,6 +15,15 @@ enum CourseType {
   workshop
 }
 
+enum PaymentStatus {
+  PENDING
+  PAID
+  REJECTED
+  ABORTED
+  TIMEOUT
+  ERROR
+}
+
 model User {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   names       String
@@ -49,14 +58,29 @@ model Course {
 model Purchase {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId      String   @db.Uuid
-  buyOrder    String?
+  // UNIQUE because buyOrder is the ONLY key that links a Transbank callback back
+  // to a row. The session cookie is not sent on Transbank's cross-site POST, so
+  // this is the sole trustworthy join key.
+  buyOrder    String?  @unique
   isPaid      Boolean  @default(false)
   coursesIds  String[] @db.Uuid
+
+  // Amount quoted at creation, in integer CLP. The return handler verifies the
+  // committed amount against this, so it must be written BEFORE redirecting.
+  amount            Int?
+  status            PaymentStatus @default(PENDING)
+  token             String?   // token_ws, kept for refunds/audit
+  authorizationCode String?
+  paymentTypeCode   String?
+  paidAt            DateTime?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   enrollments Enrollment[]
+
+  @@index([status])
 }
 
 model Enrollment {
