@@ -42,6 +42,6 @@ export async function sendPurchaseConfirmation(purchaseId: string): Promise<void
     return true;
   });
 
-  const html = buildConfirmationEmailHtml({ id: purchaseId, courses });
+  const html = buildConfirmationEmailHtml({ id: purchaseId, courses, user });
   await sendMail(user.email, SUBJECT, html);
 }

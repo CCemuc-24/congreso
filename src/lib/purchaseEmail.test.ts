@@ -81,6 +81,7 @@ describe('sendPurchaseConfirmation', () => {
     expect(mockBuildHtml).toHaveBeenCalledWith({
       id: PURCHASE_ID,
       courses: [CORE, ELECTIVE],
+      user: { id: USER, email: 'buyer@uc.cl' },
     });
   });
 
@@ -96,6 +97,7 @@ describe('sendPurchaseConfirmation', () => {
     expect(mockBuildHtml).toHaveBeenCalledWith({
       id: PURCHASE_ID,
       courses: [CORE, ELECTIVE],
+      user: { id: USER, email: 'buyer@uc.cl' },
     });
   });
 

@@ -21,7 +21,7 @@ camino de producción, no una simulación.
 Dos variables de entorno, ambas server-only:
 
 | Variable | Efecto |
-|---|---|
+| --- | --- |
 | `PAYMENT_TEST_CODE` | Ausente o vacía ⇒ el mecanismo no existe. Seteada ⇒ habilitada. |
 | `PAYMENT_TEST_AMOUNT_CLP` | Monto a cobrar. Default 50. |
 
@@ -33,9 +33,24 @@ Apagar y prender exige un redeploy en Vercel (~1-2 min). Fue una decisión
 consciente: se prefirió superficie de ataque cero cuando está apagado por sobre
 poder togglear en caliente.
 
+El interruptor se opera con [`scripts/test-payment.sh`](../../../scripts/test-payment.sh):
+
+```bash
+./scripts/test-payment.sh status   # ¿prendido? ¿lo alcanza el deploy actual?
+./scripts/test-payment.sh on       # genera código, lo sube, redespliega
+./scripts/test-payment.sh off      # borra las variables, redespliega
+```
+
+El script redespliega porque las variables de Vercel se inyectan en build time:
+tocarlas sin reconstruir no tiene ningún efecto, y un script que solo las tocara
+haría creer que el interruptor funcionó. Antes de prender, verifica que el commit
+que está en producción realmente contenga `src/lib/testPayment.ts` — redesplegar
+reconstruye ese mismo commit, así que prender sobre un deploy anterior a la
+feature escribiría el secreto sin habilitar nada.
+
 ## Uso
 
-```
+```text
 https://www.ccem.cl/form?w1id=<curso>&testCode=<secreto>
 ```
 
@@ -47,7 +62,7 @@ interpreta. El servidor decide.
 Una unidad aislada, `src/lib/testPayment.ts`, con una sola responsabilidad:
 decidir a qué monto se cotiza una compra.
 
-```
+```text
 resolveTestPaymentAmount(fullPrice, testCode) -> number
 ```
 
