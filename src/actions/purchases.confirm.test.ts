@@ -73,6 +73,33 @@ describe('getPurchaseReceipt', () => {
     }
   });
 
+  it('reads only the public columns, so no Webpay token ever reaches the browser', async () => {
+    // /confirmation is unauthenticated by design (this app has no identity
+    // mechanism), so anyone holding a purchase UUID can call this action — and a
+    // Server Action serializes its entire return value regardless of what the
+    // caller destructures. Asserted as an exact object: adding token,
+    // authorizationCode, paymentTypeCode or buyOrder here must fail the suite.
+    prismaMock.purchase.findUnique.mockResolvedValue({
+      id: ID, userId: 'u1', coursesIds: [], isPaid: true, status: 'PAID', amount: 0,
+    });
+    prismaMock.course.findMany.mockResolvedValue([]);
+    prismaMock.user.findUnique.mockResolvedValue(null);
+
+    await getPurchaseReceipt(ID);
+
+    expect(prismaMock.purchase.findUnique).toHaveBeenCalledWith({
+      where: { id: ID },
+      select: {
+        id: true,
+        userId: true,
+        coursesIds: true,
+        status: true,
+        amount: true,
+        isPaid: true,
+      },
+    });
+  });
+
   it('still returns the receipt when the buyer record cannot be loaded', async () => {
     prismaMock.purchase.findUnique.mockResolvedValue({
       id: ID, userId: 'u1', coursesIds: [], isPaid: true, status: 'PAID', amount: 0,

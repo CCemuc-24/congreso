@@ -1,6 +1,6 @@
 'use server';
 
-import type { Purchase, Course, User } from '@prisma/client';
+import type { Purchase, Course, User, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { createWebpayTransaction } from '@/lib/webpay';
 import { generateBuyOrder } from '@/domain/buyOrder';
@@ -17,6 +17,42 @@ import {
   resendConfirmationSchema,
 } from '@/schemas/purchase';
 
+// Everything — and ONLY what — a browser is allowed to see of a Purchase.
+//
+// A Server Action serializes its ENTIRE return value to the client regardless of
+// what the caller destructures, so returning a whole `Purchase` row from an
+// ungated action ships the payment audit trail into the browser: `token` (the
+// Webpay token_ws), `authorizationCode`, `paymentTypeCode`, and `buyOrder` — the
+// single key that links a Transbank callback back to a row, and therefore the one
+// value the settle path treats as trustworthy. None of them is rendered anywhere.
+//
+// The admin-gated reads (getPurchases, updatePurchase) deliberately keep the full
+// row: recording those columns for refunds and reconciliation is exactly why this
+// branch added them, and an operator holding ADMIN_SECRET is the intended reader.
+const publicPurchaseSelect = {
+  id: true,
+  userId: true,
+  coursesIds: true,
+  status: true,
+  amount: true,
+  // Retained as a mirror of status === 'PAID'. Load-bearing for /confirmation,
+  // which treats either as settled so a row written by a rolled-back deploy
+  // (isPaid: true, status: PENDING) still renders as confirmed.
+  isPaid: true,
+} satisfies Prisma.PurchaseSelect;
+
+type PublicPurchase = Prisma.PurchaseGetPayload<{ select: typeof publicPurchaseSelect }>;
+
+/**
+ * Project a full row onto the public shape. Used where the action needs columns
+ * internally (createPurchase reads buyOrder to open the Webpay transaction) that
+ * the client must not receive, so a Prisma `select` can't do the narrowing.
+ */
+function toPublicPurchase(purchase: Purchase): PublicPurchase {
+  const { id, userId, coursesIds, status, amount, isPaid } = purchase;
+  return { id, userId, coursesIds, status, amount, isPaid };
+}
+
 function returnUrlFor(purchaseId: string): string {
   const base =
     process.env.WEBPAY_RETURN_URL ??
@@ -26,7 +62,9 @@ function returnUrlFor(purchaseId: string): string {
 
 export async function createPurchase(
   input: PurchaseCreateInput,
-): Promise<ActionResult<{ purchase: Purchase; webPayResponse?: { token: string; url: string } }>> {
+): Promise<
+  ActionResult<{ purchase: PublicPurchase; webPayResponse?: { token: string; url: string } }>
+> {
   const parsed = purchaseCreateSchema.safeParse(input);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -73,7 +111,7 @@ export async function createPurchase(
   }
 
   if (purchase.isPaid) {
-    return ok({ purchase });
+    return ok({ purchase: toPublicPurchase(purchase) });
   }
 
   const webPayResponse = await createWebpayTransaction(
@@ -83,7 +121,7 @@ export async function createPurchase(
     returnUrlFor(purchase.id),
   );
 
-  return ok({ purchase, webPayResponse });
+  return ok({ purchase: toPublicPurchase(purchase), webPayResponse });
 }
 
 export async function getPurchases(adminSecret: string): Promise<ActionResult<Purchase[]>> {
@@ -96,14 +134,20 @@ export async function getPurchases(adminSecret: string): Promise<ActionResult<Pu
   return ok(purchases);
 }
 
-export async function getPurchaseById(id: string): Promise<ActionResult<Purchase>> {
-  const purchase = await prisma.purchase.findUnique({ where: { id } });
+export async function getPurchaseById(id: string): Promise<ActionResult<PublicPurchase>> {
+  const purchase = await prisma.purchase.findUnique({
+    where: { id },
+    select: publicPurchaseSelect,
+  });
   if (!purchase) return fail('Purchase not found', 404);
   return ok(purchase);
 }
 
-export async function getUserPurchases(userId: string): Promise<ActionResult<Purchase[]>> {
-  const purchases = await prisma.purchase.findMany({ where: { userId } });
+export async function getUserPurchases(userId: string): Promise<ActionResult<PublicPurchase[]>> {
+  const purchases = await prisma.purchase.findMany({
+    where: { userId },
+    select: publicPurchaseSelect,
+  });
   return ok(purchases);
 }
 
@@ -149,7 +193,7 @@ export async function deletePurchase(id: string, adminSecret: string): Promise<A
 }
 
 export async function getPurchaseReceipt(purchaseId: string): Promise<
-  ActionResult<{ purchase: Purchase; courses: Course[]; user: User | null }>
+  ActionResult<{ purchase: PublicPurchase; courses: Course[]; user: User | null }>
 > {
   const parsed = resendConfirmationSchema.safeParse({ purchaseId });
   if (!parsed.success) {
@@ -157,7 +201,10 @@ export async function getPurchaseReceipt(purchaseId: string): Promise<
     return fail(issue.message, 400, issue.path[0]?.toString());
   }
 
-  const purchase = await prisma.purchase.findUnique({ where: { id: parsed.data.purchaseId } });
+  const purchase = await prisma.purchase.findUnique({
+    where: { id: parsed.data.purchaseId },
+    select: publicPurchaseSelect,
+  });
   if (!purchase) return fail('La compra no fue encontrada', 404);
 
   try {

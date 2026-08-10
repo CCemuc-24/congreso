@@ -93,7 +93,14 @@ describe('createPurchase', () => {
 
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.data.purchase).toEqual(created);
+      // The returned purchase is projected onto the public column set: buyOrder is
+      // the key the return handler trusts to identify a row, and a Server Action
+      // serializes its whole return value to the browser, so it must not ride along.
+      expect(res.data.purchase).toEqual({
+        id: 'pur-1', userId: USER, isPaid: false, coursesIds: [C1, C2],
+        amount: 3000, status: 'PENDING',
+      });
+      expect('buyOrder' in res.data.purchase).toBe(false);
       expect(res.data.webPayResponse).toEqual({ token: 'tok-123', url: 'https://webpay/redirect' });
     }
     expect(prismaMock.purchase.create).toHaveBeenCalledWith({
@@ -118,6 +125,9 @@ describe('createPurchase', () => {
     const existing = {
       id: 'pur-9', userId: USER, buyOrder: 'OLD', isPaid: false, coursesIds: [C1],
       amount: 1000, status: 'PENDING',
+      // A retrieved row can carry a PREVIOUS attempt's audit trail — this is the
+      // case where returning the raw row would hand the browser a real token.
+      token: 'stale-token-ws', authorizationCode: 'AUTH-1', paymentTypeCode: 'VN',
     };
     prismaMock.purchase.findFirst.mockResolvedValue(existing);
     mockCreateWebpay.mockResolvedValue({ token: 'tok-9', url: 'https://webpay/9' });
@@ -127,7 +137,17 @@ describe('createPurchase', () => {
     expect(prismaMock.purchase.create).not.toHaveBeenCalled();
     expect(prismaMock.purchase.update).not.toHaveBeenCalled();
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.data.purchase).toEqual(existing);
+    if (res.ok) {
+      expect(res.data.purchase).toEqual({
+        id: 'pur-9', userId: USER, isPaid: false, coursesIds: [C1],
+        amount: 1000, status: 'PENDING',
+      });
+      expect('token' in res.data.purchase).toBe(false);
+      expect('authorizationCode' in res.data.purchase).toBe(false);
+      expect('paymentTypeCode' in res.data.purchase).toBe(false);
+    }
+    // The internal read stays unnarrowed: buyOrder is needed to open the transaction.
+    expect(mockCreateWebpay).toHaveBeenCalledWith('OLD', USER, 1000, expect.any(String));
   });
 
   it('returns only the purchase (no webPayResponse) when it is already paid', async () => {
@@ -149,7 +169,10 @@ describe('createPurchase', () => {
     expect(prismaMock.purchase.update).not.toHaveBeenCalled();
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.data.purchase).toEqual(existing);
+      expect(res.data.purchase).toEqual({
+        id: 'pur-paid', userId: USER, isPaid: true, coursesIds: [C1],
+        amount: 1000, status: 'PENDING',
+      });
       expect(res.data.webPayResponse).toBeUndefined();
     }
     expect(mockCreateWebpay).not.toHaveBeenCalled();
