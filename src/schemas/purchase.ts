@@ -7,6 +7,13 @@ import { paymentStatusValues } from '@/domain/paymentStatus';
 export const purchaseCreateSchema = z.object({
   userId: z.string().uuid(),
   coursesIds: z.array(z.string().uuid()).min(1),
+  // Operator-only escape hatch (see src/lib/testPayment.ts). It MUST be declared
+  // here even though it is optional: z.object() strips keys it does not know
+  // about, so an undeclared testCode would arrive as undefined at the action and
+  // the mechanism would silently never fire. Left unconstrained beyond `string`
+  // — the only thing that makes it valid is a constant-time match against
+  // PAYMENT_TEST_CODE, and validating its shape here would leak that shape.
+  testCode: z.string().optional(),
 });
 
 // The recipient is resolved server-side from the purchase owner, so the only

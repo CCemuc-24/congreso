@@ -29,11 +29,11 @@ const Contact: React.FC = () => {
         <SectionHeading eyebrow="Hablemos" title="Contacto" />
         <div className="flex flex-col items-center gap-4">
           <a
-            href="mailto:contacto@ccemuc.cl"
+            href="mailto:contacto@ccem.cl"
             className="inline-flex items-center gap-2 text-lg text-primary transition-colors hover:text-primary-700"
           >
             <Mail className="h-5 w-5" />
-            contacto@ccemuc.cl
+            contacto@ccem.cl
           </a>
           <a
             href="https://www.instagram.com/ccem.uc"
