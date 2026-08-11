@@ -21,7 +21,7 @@ const COURSE_IMAGE_RULES: { keyword: string; image: StaticImageData }[] = [
   { keyword: 'cirugía vascular', image: moduloVascular },
   { keyword: 'digestiva', image: moduloDigestivaColoproctologia },
   { keyword: 'ginecología y obstetricia', image: moduloGinecologiaObstetricia },
-  { keyword: 'tacto rectal', image: workshopTactoRectal },
+  { keyword: 'examen urológico', image: workshopTactoRectal },
   { keyword: 'examen ginecológico', image: workshopExamenGinecologico },
   { keyword: 'e-fast', image: workshopEfast },
   { keyword: 'ecg', image: workshopEcg },
